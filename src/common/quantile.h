@@ -14,9 +14,40 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
+#include "oblivious_primitives.h"
 
 namespace xgboost {
 namespace common {
+
+bool ObliviousSetCombineEnabled();
+bool ObliviousSetPruneEnabled();
+bool ObliviousDebugCheckEnabled();
+
+template<typename DType, typename RType>
+struct WQSummary;
+
+template<typename DType, typename RType>
+void CheckEqualSummary(const WQSummary<DType, RType> &lhs,
+                       const WQSummary<DType, RType> &rhs) {
+  auto trace = [&]() {
+    LOG(CONSOLE) << "---------- lhs: ";
+    lhs.Print();
+    LOG(CONSOLE) << "---------- rhs: ";
+    rhs.Print();
+  };
+  // DEBUG CHECK
+  if (lhs.size != rhs.size) {
+    trace();
+    LOG(FATAL) << "lhs.size=" << lhs.size << ", rhs.size=" << rhs.size;
+  }
+  for (size_t i = 0; i < lhs.size; ++i) {
+    if (lhs.data[i] != rhs.data[i]) {
+      trace();
+      LOG(FATAL) << "Results mismatch in index " << i;
+    }
+  }
+}
+
 /*!
  * \brief experimental wsummary
  * \tparam DType type of data content
@@ -47,6 +78,19 @@ struct WQSummary {
       CHECK(rmin >= 0 && rmax >= 0 && wmin >= 0) << "nonneg constraint";
       CHECK(rmax- rmin - wmin > -eps) <<  "relation constraint: min/max";
     }
+
+    // For bitonic sort/merge.
+    inline bool operator<(const Entry &b) const {
+      return value < b.value;
+    }
+
+    inline bool operator==(const Entry &b) const {
+      return value == b.value && rmin == b.rmin && rmax == b.rmax &&
+             wmin == b.wmin;
+    }
+
+    inline bool operator!=(const Entry &b) const { return !(*this == b); }
+
     /*! \return rmin estimation for v strictly bigger than value */
     XGBOOST_DEVICE inline RType RMinNext() const {
       return rmin + wmin;
@@ -87,7 +131,10 @@ struct WQSummary {
       }
     }
     inline void MakeSummary(WQSummary *out) {
-      std::sort(queue.begin(), queue.begin() + qtail);
+      // std::sort(queue.begin(), queue.begin() + qtail);
+      BitonicSort(queue.begin(), queue.begin() + qtail);
+
+      // TODO: do we need to make below merge oblivious ?
       out->size = 0;
       // start update sketch
       RType wsum = 0;
@@ -184,14 +231,102 @@ struct WQSummary {
       }
     }
   }
+
   /*!
    * \brief set current summary to be pruned summary of src
    *        assume data field is already allocated to be at least maxsize
    * \param src source summary
    * \param maxsize size we can afford in the pruned sketch
    */
+  inline void ObliviousSetPrune(const WQSummary &src, size_t maxsize) {
+    if (src.size <= maxsize) {
+      this->CopyFrom(src);
+      return;
+    }
 
-  inline void SetPrune(const WQSummary &src, size_t maxsize) {
+    struct Item {
+      Entry entry;
+      RType rank;
+      bool has_entry;
+      inline bool operator<(const Item &rhs) const {
+        return rank < rhs.rank ||
+               (rank == rhs.rank && entry.value < rhs.entry.value);
+      }
+    };
+
+    // Make sure dx2 items are last one when `d == (rmax + rmin) / 2`.
+    const Entry kDummyEntryWithMaxValue{0, 0, 1,
+                                        std::numeric_limits<DType>::max()};
+
+    const RType begin = src.data[0].rmax;
+    const RType range = src.data[src.size - 1].rmin - src.data[0].rmax;
+    const size_t n = maxsize - 1;
+
+    // Construct sort vector.
+    std::vector<Item> items;
+    items.reserve(2 * src.size + n);
+    for (size_t k = 1; k < n; ++k) {
+      RType dx2 = 2 * ((k * range) / n + begin);
+      items.push_back(Item{kDummyEntryWithMaxValue, dx2, false});
+    }
+    std::transform(src.data + 1, src.data + src.size, std::back_inserter(items),
+                   [](const Entry &entry) {
+                     return Item{entry, entry.rmax + entry.rmin, true};
+                   });
+    for (size_t i = 1; i < src.size - 1; ++i) {
+      items.push_back(Item{src.data[i],
+                           src.data[i].RMinNext() + src.data[i + 1].RMaxPrev(),
+                           true});
+    }
+
+    // Bitonic Sort.
+    BitonicSort(items.begin(), items.end());
+
+    // Choose entrys.
+    RType last_selected_entry_value = std::numeric_limits<RType>::min();
+    size_t select_count = 0;
+    for (size_t i = 1; i < items.size(); ++i) {
+      bool do_select = !items[i - 1].has_entry && items[i].has_entry &&
+                       items[i].entry.value != last_selected_entry_value;
+      ObliviousAssign(do_select, items[i].entry.value,
+                      last_selected_entry_value, &last_selected_entry_value);
+      ObliviousAssign(do_select, std::numeric_limits<RType>::min(),
+                      items[i].rank, &items[i].rank);
+      select_count += ObliviousChoose(do_select, 1, 0);
+    }
+    // Bitonic Sort.
+    BitonicSort(items.begin(), items.end());
+
+    this->data[0] = src.data[0];
+    this->size = 1 + select_count;
+    std::transform(items.begin(), items.begin() + select_count, this->data + 1,
+                   [](const Item &item) {
+                     CHECK(item.has_entry &&
+                           item.rank == std::numeric_limits<RType>::min());
+                     return item.entry;
+                   });
+
+    // First and last ones are always kept in prune.
+    if (data[size - 1].value != src.data[src.size - 1].value) {
+      CHECK(size < maxsize);
+      data[size++] = src.data[src.size - 1];
+    }
+
+    if (ObliviousDebugCheckEnabled()) {
+      std::vector<Entry> oblivious_results(data, data + size);
+      RawSetPrune(src, maxsize);
+      CheckEqualSummary(
+          *this, WQSummary(oblivious_results.data(), oblivious_results.size()));
+    }
+  }
+
+  /*!
+   * \brief set current summary to be pruned summary of src
+   *        assume data field is already allocated to be at least maxsize
+   * \param src source summary
+   * \param maxsize size we can afford in the pruned sketch
+   */
+  inline void RawSetPrune(const WQSummary &src, size_t maxsize) {
     if (src.size <= maxsize) {
       this->CopyFrom(src); return;
     }
@@ -206,7 +341,7 @@ struct WQSummary {
       RType dx2 =  2 * ((k * range) / n + begin);
       // find first i such that  d < (rmax[i+1] + rmin[i+1]) / 2
       while (i < src.size - 1
-             && dx2 >= src.data[i + 1].rmax + src.data[i + 1].rmin) ++i;
+          && dx2 >= src.data[i + 1].rmax + src.data[i + 1].rmin) ++i;
       CHECK(i != src.size - 1);
       if (dx2 < src.data[i].RMinNext() + src.data[i + 1].RMaxPrev()) {
         if (i != lastidx) {
@@ -223,11 +358,178 @@ struct WQSummary {
     }
   }
   /*!
+   * \brief set current summary to be pruned summary of src
+   *        assume data field is already allocated to be at least maxsize
+   * \param src source summary
+   * \param maxsize size we can afford in the pruned sketch
+   */
+
+  inline void SetPrune(const WQSummary &src, size_t maxsize) {
+    if (ObliviousSetPruneEnabled())
+      return ObliviousSetPrune(src, maxsize);
+    else
+      return RawSetPrune(src, maxsize);
+  }
+
+  /*!
    * \brief set current summary to be merged summary of sa and sb
    * \param sa first input summary to be merged
    * \param sb second input summary to be merged
    */
-  inline void SetCombine(const WQSummary &sa,
+  inline void ObliviousSetCombine(const WQSummary &sa, const WQSummary &sb) {
+    this->size = sa.size + sb.size;
+    if (this->size == 0) {
+      return;
+    }
+
+    // TODO: need confirm.
+    if (sa.size == 0) {
+      this->CopyFrom(sb); return;
+    }
+    if (sb.size == 0) {
+      this->CopyFrom(sa); return;
+    }
+
+    struct EntryWithPartyInfo {
+      Entry entry;
+      bool is_party_a;
+
+      inline bool operator<(const EntryWithPartyInfo& b) const {
+        return entry < b.entry;
+      }
+    };
+
+    std::vector<EntryWithPartyInfo> merged_party_entrys(this->size);
+    // Fill party info and build bitonic sequence.
+    std::transform(sa.data, sa.data + sa.size, merged_party_entrys.begin(),
+                   [](const Entry &entry) {
+                     return EntryWithPartyInfo{entry, true};
+                   });
+    std::transform(sb.data, sb.data + sb.size,
+                   merged_party_entrys.begin() + sa.size,
+                   [](const Entry &entry) {
+                     return EntryWithPartyInfo{entry, false};
+                   });
+    // Build bitonic sequence.
+    std::reverse(merged_party_entrys.begin() + sa.size,
+                 merged_party_entrys.end());
+    // Bitonic merge.
+    BitonicMerge(merged_party_entrys.begin(), merged_party_entrys.end());
+
+    // Forward pass to compute rmin.
+    RType a_prev_rmin = 0;
+    RType b_prev_rmin = 0;
+    for (size_t idx = 0; idx < merged_party_entrys.size(); ++idx) {
+      bool equal_next =
+          (idx == merged_party_entrys.size() - 1)
+              ? false
+              : ObliviousEqual(merged_party_entrys[idx].entry.value,
+                               merged_party_entrys[idx + 1].entry.value);
+      bool equal_prev =
+          idx == 0 ? false
+                   : ObliviousEqual(merged_party_entrys[idx].entry.value,
+                                    merged_party_entrys[idx - 1].entry.value);
+
+      // Save first.
+      RType next_aprev_rmin = ObliviousChoose(
+          merged_party_entrys[idx].is_party_a,
+          merged_party_entrys[idx].entry.RMinNext(), a_prev_rmin);
+      RType next_bprev_rmin = ObliviousChoose(
+          !merged_party_entrys[idx].is_party_a,
+          merged_party_entrys[idx].entry.RMinNext(), b_prev_rmin);
+
+      // This is a. Need to add previous b->RMinNext().
+      RType chosen_prev_rmin = ObliviousChoose(
+          merged_party_entrys[idx].is_party_a, b_prev_rmin, a_prev_rmin);
+
+      // Update rmin. Skip for equal groups now.
+      RType rmin_to_add = ObliviousChoose(
+          equal_next || equal_prev, static_cast<RType>(0), chosen_prev_rmin);
+      merged_party_entrys[idx].entry.rmin += rmin_to_add;
+
+      // Update prev_rmin.
+      a_prev_rmin = next_aprev_rmin;
+      b_prev_rmin = next_bprev_rmin;
+    }
+
+    // Backward pass to compute rmax.
+    RType a_prev_rmax = sa.data[sa.size - 1].rmax;
+    RType b_prev_rmax = sb.data[sb.size - 1].rmax;
+    size_t duplicate_count = 0;
+    for (ssize_t idx = merged_party_entrys.size() - 1; idx >= 0; --idx) {
+      bool equal_prev =
+          idx == 0 ? false
+                   : ObliviousEqual(merged_party_entrys[idx].entry.value,
+                                    merged_party_entrys[idx - 1].entry.value);
+      bool equal_next =
+          idx == merged_party_entrys.size() - 1
+              ? false
+              : ObliviousEqual(merged_party_entrys[idx].entry.value,
+                               merged_party_entrys[idx + 1].entry.value);
+      duplicate_count += ObliviousChoose(equal_next, 1, 0);
+
+      // Need to save first since the rmax will be overwritten.
+      RType next_aprev_rmax = ObliviousChoose(
+          merged_party_entrys[idx].is_party_a,
+          merged_party_entrys[idx].entry.RMaxPrev(), a_prev_rmax);
+      RType next_bprev_rmax = ObliviousChoose(
+          !merged_party_entrys[idx].is_party_a,
+          merged_party_entrys[idx].entry.RMaxPrev(), b_prev_rmax);
+
+      // Add peer RMaxPrev.
+      RType rmax_to_add = ObliviousChoose(merged_party_entrys[idx].is_party_a,
+                                          b_prev_rmax, a_prev_rmax);
+      // Handle equals.
+      RType rmin_to_add =
+          ObliviousChoose(equal_prev, merged_party_entrys[idx - 1].entry.rmin,
+                          static_cast<RType>(0));
+      RType wmin_to_add =
+          ObliviousChoose(equal_prev, merged_party_entrys[idx - 1].entry.wmin,
+                          static_cast<RType>(0));
+      rmax_to_add = ObliviousChoose(
+          equal_prev, merged_party_entrys[idx - 1].entry.rmax, rmax_to_add);
+      // Update.
+      merged_party_entrys[idx].entry.rmax += rmax_to_add;
+      merged_party_entrys[idx].entry.rmin += rmin_to_add;
+      merged_party_entrys[idx].entry.wmin += wmin_to_add;
+
+      // Copy rmin, rmax, wmin from previous if values are equal.
+      // Value is ok to be infinite now since this is two party merge, at most
+      // two items are the same given a specific value.
+      ObliviousAssign(equal_next, merged_party_entrys[idx+1].entry,
+                      merged_party_entrys[idx].entry,
+                      &merged_party_entrys[idx].entry);
+      ObliviousAssign(equal_next, std::numeric_limits<DType>::max(),
+                      merged_party_entrys[idx].entry.value,
+                      &merged_party_entrys[idx].entry.value);
+
+      a_prev_rmax = next_aprev_rmax;
+      b_prev_rmax = next_bprev_rmax;
+    }
+
+    // Bitonic sort to push duplicates to end of list.
+    std::transform(merged_party_entrys.begin(), merged_party_entrys.end(),
+                   this->data, [](const EntryWithPartyInfo &party_entry) {
+                     return party_entry.entry;
+                   });
+    BitonicSort(this->data, this->data + this->size);
+    // Need to confirm shrink.
+    this->size -= duplicate_count;
+
+    if (ObliviousDebugCheckEnabled()) {
+      std::vector<Entry> oblivious_results(this->data, this->data + this->size);
+      RawSetCombine(sa, sb);
+      CheckEqualSummary(
+          *this, WQSummary(oblivious_results.data(), oblivious_results.size()));
+    }
+  }
+
+  /*!
+   * \brief set current summary to be merged summary of sa and sb
+   * \param sa first input summary to be merged
+   * \param sb second input summary to be merged
+   */
+  inline void RawSetCombine(const WQSummary &sa,
                          const WQSummary &sb) {
     if (sa.size == 0) {
       this->CopyFrom(sb); return;
@@ -289,6 +591,18 @@ struct WQSummary {
     }
     CHECK(size <= sa.size + sb.size) << "bug in combine";
   }
+  /*!
+   * \brief set current summary to be merged summary of sa and sb
+   * \param sa first input summary to be merged
+   * \param sb second input summary to be merged
+   */
+  inline void SetCombine(const WQSummary &sa,
+                         const WQSummary &sb) {
+    if (ObliviousSetCombineEnabled())
+      return ObliviousSetCombine(sa, sb);
+    else
+      return RawSetCombine(sa, sb);
+  }
   // helper function to print the current content of sketch
   inline void Print() const {
     for (size_t i = 0; i < this->size; ++i) {
@@ -298,6 +612,12 @@ struct WQSummary {
                    << ", v=" << data[i].value;
     }
   }
+
+  inline void CheckAndPrint() const {
+      CheckValid(kRtEps);
+      Print();
+  }
+
   // try to fix rounding error
   // and re-establish invariance
   inline void FixError(RType *err_mingap,
@@ -355,6 +675,9 @@ struct WXQSummary : public WQSummary<DType, RType> {
   }
   // set prune
   inline void SetPrune(const WQSummary<DType, RType> &src, size_t maxsize) {
+    if (ObliviousSetPruneEnabled()) {
+      return WQSummary<DType, RType>::ObliviousSetPrune(src, maxsize);
+    }
     if (src.size <= maxsize) {
       this->CopyFrom(src); return;
     }
