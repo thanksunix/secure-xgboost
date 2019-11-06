@@ -187,20 +187,134 @@ void QuantileHistMaker::Builder::EvaluateSplits(
   for (auto const& entry : qexpand_depth_wise_) {
     int nid = entry.nid;
     this->EvaluateSplit(nid, gmat, hist_, *p_fmat, *p_tree);
-    if (snode_[nid].best.loss_chg < kRtEps ||
-        (param_.max_depth > 0 && depth == param_.max_depth) ||
-        (param_.max_leaves > 0 && (*num_leaves) == param_.max_leaves)) {
+    // For oblivious: we keep expanding nodes since we wanna protect tree
+    // structures.
+    const bool kMaxDepthReached =
+        (param_.max_depth > 0 && depth == param_.max_depth);
+    const bool kEnforceMaxDepth = true;
+    if (kMaxDepthReached ||
+        (!common::ObliviousEnabled() && !kEnforceMaxDepth &&
+         (snode_[nid].best.loss_chg < kRtEps ||
+          (param_.max_leaves > 0 && (*num_leaves) == param_.max_leaves)))) {
       (*p_tree)[nid].SetLeaf(snode_[nid].weight * param_.learning_rate);
     } else {
       this->ApplySplit(nid, gmat, column_matrix, hist_, *p_fmat, p_tree);
       int left_id = (*p_tree)[nid].LeftChild();
       int right_id = (*p_tree)[nid].RightChild();
-      temp_qexpand_depth->push_back(ExpandEntry(left_id,
-                                                p_tree->GetDepth(left_id), 0.0, (*timestamp)++));
-      temp_qexpand_depth->push_back(ExpandEntry(right_id,
-                                                p_tree->GetDepth(right_id), 0.0, (*timestamp)++));
+      temp_qexpand_depth->push_back(
+          ExpandEntry(left_id, p_tree->GetDepth(left_id), 0.0, (*timestamp)++));
+      temp_qexpand_depth->push_back(ExpandEntry(
+          right_id, p_tree->GetDepth(right_id), 0.0, (*timestamp)++));
       // - 1 parent + 2 new children
       (*num_leaves)++;
+    }
+  }
+
+  // Oblivious split.
+  ApplySplitLevelWise(gmat, column_matrix, p_tree, depth);
+  // For debug.
+  const bool kDebugHistogram = false;
+  if (kDebugHistogram) {
+    for (auto& entry : qexpand_depth_wise_) {
+      std::stringstream ss;
+      for (size_t fid = 0; fid < column_matrix.GetNumFeature(); ++fid) {
+        ss << hist_[entry.nid][fid].sum_grad << ", ";
+        ss << hist_[entry.nid][fid].sum_hess << ", ";
+      }
+      LOG(CONSOLE) << "nid=" << entry.nid << ", hist=" << ss.str();
+    }
+  }
+}
+
+void QuantileHistMaker::Builder::ApplySplitLevelWise(
+    const GHistIndexMatrix& gmat, const ColumnMatrix& column_matrix,
+    const RegTree* p_tree, int depth) {
+  if (depth < this->param_.max_depth && !qexpand_depth_wise_.empty() &&
+      xgboost::common::ObliviousEnabled()) {
+    // For debug.
+    std::vector<size_t> node_samples_count;
+    std::vector<int> next_level_ids;
+
+    // Pre-compute level containers for later `oaccess`.
+    std::vector<int> vec_split_cond;
+    std::vector<int> vec_split_fid;
+    std::vector<uint8_t> vec_default_left;
+    std::vector<int> left_childs;
+    std::vector<int> right_childs;
+    size_t base_nid = this->qexpand_depth_wise_.front().nid;
+    for (auto const& entry : this->qexpand_depth_wise_) {
+      int nid = entry.nid;
+      const bst_uint fid = (*p_tree)[nid].SplitIndex();
+      const bst_float split_pt = (*p_tree)[nid].SplitCond();
+      const uint32_t lower_bound = gmat.cut.row_ptr[fid];
+      const uint32_t upper_bound = gmat.cut.row_ptr[fid + 1];
+      int32_t split_cond = -1;
+      // convert floating-point split_pt into corresponding bin_id
+      // split_cond = -1 indicates that split_pt is less than all known cut
+      // points
+      CHECK_LT(upper_bound,
+               static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
+      for (uint32_t i = lower_bound; i < upper_bound; ++i) {
+        ObliviousAssign(split_pt == gmat.cut.cut[i], static_cast<int>(i),
+                        split_cond, &split_cond);
+      }
+      LOG(DEBUG) << "DEBUG_OBL: split_cond[" << nid << "] = " << split_cond;
+
+      vec_split_cond.push_back(split_cond);
+      vec_split_fid.push_back(fid);
+      left_childs.push_back((*p_tree)[nid].LeftChild());
+      right_childs.push_back((*p_tree)[nid].RightChild());
+      vec_default_left.push_back((*p_tree)[nid].DefaultLeft() ? 1 : 0);
+    }
+
+    // Efficient level-wise method. O(n_rows * O(`oaccess`)).
+    const size_t nrows = gmat.row_ptr.size() - 1;
+    for (size_t row_idx = 0; row_idx < nrows; ++row_idx) {
+      // TODO: `oaccess` for level index could be possibly just one SIMD
+      // instruction.
+      const size_t level_index =
+          this->row_node_map_.GetRowTarget(row_idx, depth) - base_nid;
+      CHECK(level_index < vec_split_fid.size());
+      const xgboost::bst_uint fid = vec_split_fid[level_index];
+      const int split_cond = vec_split_cond[level_index];
+      const bool default_left = vec_default_left[level_index] == 1;
+      const int left_id = left_childs[level_index];
+      const int right_id = right_childs[level_index];
+
+      // TODO: this O(oaccess) depends on how many features we have.
+      const uint32_t fbin_idx =
+          column_matrix.OGetRowFeatureBinIndex(row_idx, fid);
+
+      int target_id;
+      // Normal value case.
+      ObliviousAssign(
+          static_cast<int64_t>(fbin_idx) <= static_cast<int64_t>(split_cond),
+          left_id, right_id, &target_id);
+      // Missing value case.
+      const int missing_value_target_id = default_left ? left_id : right_id;
+      ObliviousAssign(
+          fbin_idx == std::numeric_limits<uint32_t>::max(),
+          missing_value_target_id, target_id, &target_id);
+      CHECK(depth + 1 <= this->param_.max_depth);
+      this->row_node_map_.SetRowTarget(row_idx, depth + 1, target_id);
+
+      if (xgboost::common::ObliviousDebugCheckEnabled()) {
+        if (target_id >= node_samples_count.size()) {
+          node_samples_count.resize(target_id + 1, 0);
+        }
+        node_samples_count[target_id]++;
+      }
+    }
+
+    if (xgboost::common::ObliviousDebugCheckEnabled()) {
+      std::copy(left_childs.begin(), left_childs.end(),
+                std::back_inserter(next_level_ids));
+      std::copy(right_childs.begin(), right_childs.end(),
+                std::back_inserter(next_level_ids));
+      for (auto nid : next_level_ids) {
+        const auto& row_set = this->row_set_collection_[nid];
+        CHECK_EQ(row_set.Size(), node_samples_count[nid]);
+      }
     }
   }
 }
@@ -222,7 +336,13 @@ void QuantileHistMaker::Builder::ExpandWithDepthWidth(
     int starting_index = std::numeric_limits<int>::max();
     int sync_count = 0;
     std::vector<ExpandEntry> temp_qexpand_depth;
-    BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree, gpair_h);
+    if (common::ObliviousEnabled()) {
+      BuildLocalHistogramsLevelWise(&starting_index, &sync_count, gmat, gmatb,
+                                    p_tree, gpair_h);
+    } else {
+      BuildLocalHistograms(&starting_index, &sync_count, gmat, gmatb, p_tree,
+                           gpair_h);
+    }
     SyncHistograms(starting_index, sync_count, p_tree);
     BuildNodeStats(gmat, p_fmat, p_tree, gpair_h);
     EvaluateSplits(gmat, column_matrix, p_fmat, p_tree, &num_leaves, depth, &timestamp,
@@ -328,9 +448,14 @@ void QuantileHistMaker::Builder::Update(const GHistIndexMatrix& gmat,
 
   this->InitData(gmat, gpair_h, *p_fmat, *p_tree);
 
-  if (param_.grow_policy == TrainParam::kLossGuide) {
+  // Init oblivious helper.
+  row_node_map_.Init(gmat.row_ptr.size() - 1, param_.max_depth);
+
+  if (!common::ObliviousEnabled() &&
+      param_.grow_policy == TrainParam::kLossGuide) {
     ExpandWithLossGuide(gmat, gmatb, column_matrix, p_fmat, p_tree, gpair_h);
   } else {
+    // Enforce DepthWise for obliviousness.
     ExpandWithDepthWidth(gmat, gmatb, column_matrix, p_fmat, p_tree, gpair_h);
   }
 
@@ -633,6 +758,8 @@ void QuantileHistMaker::Builder::ApplySplit(int nid,
     }
   }
 
+  LOG(DEBUG) << "DEBUG_RAW: split_cond[" << nid << "] = " << split_cond;
+
   const auto& rowset = row_set_collection_[nid];
 
   Column column = column_matrix.GetColumn(fid);
@@ -904,6 +1031,48 @@ void QuantileHistMaker::Builder::EnumerateSplit(int d_step,
     }
   }
   p_best->Update(best);
+}
+
+void QuantileHistMaker::Builder::BuildLocalHistogramsLevelWise(
+    int* starting_index, int* sync_count, const GHistIndexMatrix& gmat,
+    const GHistIndexBlockMatrix& gmatb, RegTree* p_tree,
+    const std::vector<GradientPair>& gpair_h) {
+  builder_monitor_.Start("BuildLocalHistogramsLevelWise");
+
+  // pre-allocate spaces
+  std::vector<int> node_ids;
+  int depth = -1;
+  for (auto const& entry : qexpand_depth_wise_) {
+    DCHECK(depth == -1 || depth == entry.depth);
+    depth = entry.depth;
+    hist_.AddHistRow(entry.nid);
+    node_ids.push_back(entry.nid);
+    *starting_index = std::min(*starting_index, entry.nid);
+    (*sync_count)++;
+  }
+
+  const uint32_t* index = gmat.index.data();
+  const size_t* row_ptr =  gmat.row_ptr.data();
+  const auto nrows = gmat.row_ptr.size() - 1;
+  // The subtraction trick does not benefit obliviousness.
+  // O(n_cols * n_rows * O(`oaccess`)).
+  // TODO: need atomic |GradStats.Add| if wanna leverage openmp.
+// #pragma omp parallel for schedule(static) num_threads(this->nthread_)
+  for (size_t row_idx = 0; row_idx < nrows; ++row_idx) {
+    const size_t icol_start = row_ptr[row_idx];
+    const size_t icol_end = row_ptr[row_idx + 1];
+    for (size_t j = icol_start; j < icol_end; ++j) {
+      const uint32_t idx_bin = index[j];
+      const int target_nid = row_node_map_.GetRowTarget(row_idx, depth);
+      CHECK(target_nid >= 0 && target_nid < p_tree->param.num_nodes)
+          << "Bad target_nid: " << target_nid;
+      // TODO: need `oaccess` here in range (hist_[level_begin_nid,
+      // level_end_nid]). If `oaccess` can only works with one double, `Add` can
+      // be separated as two doubles.
+      hist_[target_nid][idx_bin].Add(gpair_h[row_idx]);
+    }
+  }
+  builder_monitor_.Stop("BuildLocalHistogramsLevelWise");
 }
 
 XGBOOST_REGISTER_TREE_UPDATER(FastHistMaker, "grow_fast_histmaker")

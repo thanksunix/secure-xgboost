@@ -22,6 +22,7 @@ namespace common {
 bool ObliviousSetCombineEnabled();
 bool ObliviousSetPruneEnabled();
 bool ObliviousDebugCheckEnabled();
+bool ObliviousEnabled();
 
 template<typename DType, typename RType>
 struct WQSummary;
