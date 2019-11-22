@@ -369,5 +369,9 @@ int CLIRunTask(int argc, char *argv[]) {
 }  // namespace xgboost
 
 int main(int argc, char *argv[]) {
-  return xgboost::CLIRunTask(argc, argv);
+  try {
+    return xgboost::CLIRunTask(argc, argv);
+  } catch (const std::exception& e) {
+    LOG(CONSOLE) << "Exception: " << e.what();
+  }
 }
