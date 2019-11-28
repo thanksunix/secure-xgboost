@@ -60,7 +60,7 @@ uint32_t o_assign(bool pred, uint32_t t_val, uint32_t f_val) {
             "mov %2, %0;"
             "test %1, %1;"
             "cmovz %3, %0;"
-            : "=r" (result)
+            : "=&r" (result)
             : "r" (pred), "r" (t_val), "r" (f_val)
             : "cc"
             );
@@ -135,22 +135,43 @@ void o_sort(uint32_t* arr, uint32_t low, uint32_t len, bool ascending) {
     }
 }
 
+
+void test(const char* test_name, bool cond) {
+    printf("%s : ", test_name);
+    if (cond)
+        printf("pass\n");
+    else
+        printf("fail\n");
+}
+void test_sorted_uint32(uint32_t A[], uint32_t B[], size_t len) {
+    for (int i = 0; i < len; i++) {
+        if (A[i] != B[i]) {
+            printf("fail\n");
+        }
+    }
+    printf("pass\n");
+}
+
+
 /***************************************************************************************
  * Main
  **************************************************************************************/
 
-//int main() {
-//    int x = o_assign(false, 4, 5);
-//    std::cout << x << std::endl;
-//
-//    bool y = o_greater(4, 5);
-//    std::cout << y << std::endl;
-//
-//    y = o_equal(4, 4);
-//    std::cout << y << std::endl;
-//
-//    uint32_t arr[] = {5, 2, 10, 4, 2, 1, 2, 7};
-//    o_sort(arr, 0, 8, true);
-//    for (int i = 0; i < 8; i++) 
-//        std::cout << arr[i] << std::endl;
-//}
+int main() {
+    test("(true,4,5)", o_assign(true,4,5) == 4);
+    test("(false,4,5)", o_assign(false,4,5) == 5);
+    test("o_greater(4,5)", !o_greater(4,5));
+    test("o_greater(4,4)", !o_greater(4,4));
+    test("o_greater(-3,4)", !o_greater(-3,4));
+    test("o_greater(5,4)", o_greater(5,4));
+    test("o_greater(5,-4)",o_greater(5,-4));
+    test("o_greater(1,0)", o_greater(1,0));
+    test("o_equal(4,4)", o_equal(4,4));
+    test("o_equal(2,4)", !o_equal(2,4));
+    
+
+    uint32_t arr[] = {4, 5, 3, 2, 1, 0, 1};
+    o_sort(arr, 0, 7, true);
+    uint32_t sorted[] = {0, 1, 1, 2, 3, 4, 5};
+    test_sorted_uint32(arr, sorted, 7);
+}
