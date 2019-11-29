@@ -27,30 +27,118 @@ inline uint32_t log2_ceil(uint32_t n) {
  * Oblivious primitives 
  **************************************************************************************/
 
-// Returns true if t_val > f_val else f_val
-uint8_t o_greater(uint32_t t_val, uint32_t f_val) {
+// Return x > y
+template <typename T>
+uint8_t o_greater(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
             "setg %0;"
             : "=r" (result)
-            : "r" (t_val), "r" (f_val)
+            : "r" (x), "r" (y)
             : "cc"
             );
     return result;
 }
+uint8_t o_greater(double x, double y) {
+    uint8_t result;
+    __asm__ volatile (
+            "ucomisd %%xmm1, %%xmm0;"
+            "seta %0;"
+            : "=r" (result)
+            :
+            : "cc"
+            );
+    return result; 
+}
 
-// Returns true if t_val == f_val else f_val
-uint8_t o_equal(uint32_t t_val, uint32_t f_val) {
+// Return x >= y
+template <typename T>
+uint8_t o_greater_or_equal(T x, T y) {
+    uint8_t result;
+    __asm__ volatile (
+            "cmp %2, %1;"
+            "setge %0;"
+            : "=r" (result)
+            : "r" (x), "r" (y)
+            : "cc"
+            );
+    return result;
+}
+uint8_t o_greater_or_equal(double x, double y) {
+    uint8_t result;
+    __asm__ volatile (
+            "ucomisd %%xmm1, %%xmm0;"
+            "setae %0;"
+            : "=r" (result)
+            :
+            : "cc"
+            );
+    return result; 
+}
+
+// Return x == y
+template<typename T>
+uint8_t o_equal(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
             "sete %0;"
             : "=r" (result)
-            : "r" (t_val), "r" (f_val)
+            : "r" (x), "r" (y)
             : "cc"
             );
     return result;
+}
+
+// Return x < y
+template<typename T>
+uint8_t o_less(T x, T y) {
+    uint8_t result;
+    __asm__ volatile (
+            "cmp %2, %1;"
+            "setl %0;"
+            : "=r" (result)
+            : "r" (x), "r" (y)
+            : "cc"
+            );
+    return result;
+}
+uint8_t o_less(double x, double y) {
+    uint8_t result;
+    __asm__ volatile (
+            "ucomisd %%xmm1, %%xmm0;"
+            "setb %0;"
+            : "=r" (result)
+            :
+            : "cc"
+            );
+    return result; 
+}
+
+// Return x <= y
+template <typename T>
+uint8_t o_less_or_equal(T x, T y) {
+    uint8_t result;
+    __asm__ volatile (
+            "cmp %2, %1;"
+            "setle %0;"
+            : "=r" (result)
+            : "r" (x), "r" (y)
+            : "cc"
+            );
+    return result;
+}
+uint8_t o_less_or_equal(double x, double y) {
+    uint8_t result;
+    __asm__ volatile (
+            "ucomisd %%xmm1, %%xmm0;"
+            "setbe %0;"
+            : "=r" (result)
+            :
+            : "cc"
+            );
+    return result; 
 }
 
 // Returns t_val if pred is true else f_val
@@ -95,7 +183,7 @@ inline void imperative_o_merge(uint32_t* arr, uint32_t low, uint32_t len, bool a
 }
 
 // Imperative implementation of bitonic sorting network -- works only for powers of 2
-inline void imperative_o_sort(uint32_t* arr, uint32_t n, bool ascending) {
+inline void imperative_o_sort(uint32_t* arr, size_t n, bool ascending) {
     uint32_t i, j, k;
     for (k = 2; k <= n; k = 2 * k) {
         for (j = k >> 1; j > 0; j = j >> 1) {
@@ -133,45 +221,4 @@ void o_sort(uint32_t* arr, uint32_t low, uint32_t len, bool ascending) {
             imperative_o_merge(arr, low, len, ascending);
         }
     }
-}
-
-
-void test(const char* test_name, bool cond) {
-    printf("%s : ", test_name);
-    if (cond)
-        printf("pass\n");
-    else
-        printf("fail\n");
-}
-void test_sorted_uint32(uint32_t A[], uint32_t B[], size_t len) {
-    for (int i = 0; i < len; i++) {
-        if (A[i] != B[i]) {
-            printf("fail\n");
-        }
-    }
-    printf("pass\n");
-}
-
-
-/***************************************************************************************
- * Main
- **************************************************************************************/
-
-int main() {
-    test("(true,4,5)", o_assign(true,4,5) == 4);
-    test("(false,4,5)", o_assign(false,4,5) == 5);
-    test("o_greater(4,5)", !o_greater(4,5));
-    test("o_greater(4,4)", !o_greater(4,4));
-    test("o_greater(-3,4)", !o_greater(-3,4));
-    test("o_greater(5,4)", o_greater(5,4));
-    test("o_greater(5,-4)",o_greater(5,-4));
-    test("o_greater(1,0)", o_greater(1,0));
-    test("o_equal(4,4)", o_equal(4,4));
-    test("o_equal(2,4)", !o_equal(2,4));
-    
-
-    uint32_t arr[] = {4, 5, 3, 2, 1, 0, 1};
-    o_sort(arr, 0, 7, true);
-    uint32_t sorted[] = {0, 1, 1, 2, 3, 4, 5};
-    test_sorted_uint32(arr, sorted, 7);
 }
