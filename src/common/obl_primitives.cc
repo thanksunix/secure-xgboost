@@ -1,4 +1,6 @@
 #include <iostream>
+#include <algorithm>
+#include "obl_primitives.h"
 
 /***************************************************************************************
  * Helper functions
@@ -29,7 +31,7 @@ inline uint32_t log2_ceil(uint32_t n) {
 
 // Return x > y
 template <typename T>
-uint8_t o_greater(T x, T y) {
+uint8_t ObliviousGreater(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
@@ -40,10 +42,10 @@ uint8_t o_greater(T x, T y) {
             );
     return result;
 }
-uint8_t o_greater(double x, double y) {
+uint8_t ObliviousGreater(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "ucomisd %%xmm1, %%xmm0;"
+            "comisd %%xmm1, %%xmm0;"
             "seta %0;"
             : "=r" (result)
             :
@@ -54,7 +56,7 @@ uint8_t o_greater(double x, double y) {
 
 // Return x >= y
 template <typename T>
-uint8_t o_greater_or_equal(T x, T y) {
+uint8_t ObliviousGreaterOrEqual(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
@@ -65,10 +67,10 @@ uint8_t o_greater_or_equal(T x, T y) {
             );
     return result;
 }
-uint8_t o_greater_or_equal(double x, double y) {
+uint8_t ObliviousGreaterOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "ucomisd %%xmm1, %%xmm0;"
+            "comisd %%xmm1, %%xmm0;"
             "setae %0;"
             : "=r" (result)
             :
@@ -79,7 +81,7 @@ uint8_t o_greater_or_equal(double x, double y) {
 
 // Return x == y
 template<typename T>
-uint8_t o_equal(T x, T y) {
+uint8_t ObliviousEqual(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
@@ -93,7 +95,7 @@ uint8_t o_equal(T x, T y) {
 
 // Return x < y
 template<typename T>
-uint8_t o_less(T x, T y) {
+uint8_t ObliviousLess(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
@@ -104,10 +106,10 @@ uint8_t o_less(T x, T y) {
             );
     return result;
 }
-uint8_t o_less(double x, double y) {
+uint8_t ObliviousLess(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "ucomisd %%xmm1, %%xmm0;"
+            "comisd %%xmm1, %%xmm0;"
             "setb %0;"
             : "=r" (result)
             :
@@ -118,7 +120,7 @@ uint8_t o_less(double x, double y) {
 
 // Return x <= y
 template <typename T>
-uint8_t o_less_or_equal(T x, T y) {
+uint8_t ObliviousLessOrEqual(T x, T y) {
     uint8_t result;
     __asm__ volatile (
             "cmp %2, %1;"
@@ -129,10 +131,10 @@ uint8_t o_less_or_equal(T x, T y) {
             );
     return result;
 }
-uint8_t o_less_or_equal(double x, double y) {
+uint8_t ObliviousLessOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "ucomisd %%xmm1, %%xmm0;"
+            "comisd %%xmm1, %%xmm0;"
             "setbe %0;"
             : "=r" (result)
             :
@@ -141,18 +143,40 @@ uint8_t o_less_or_equal(double x, double y) {
     return result; 
 }
 
-// Returns t_val if pred is true else f_val
-uint32_t o_assign(bool pred, uint32_t t_val, uint32_t f_val) {
-    uint32_t result;
+template <typename T>
+void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
+    T result;
     __asm__ volatile (
             "mov %2, %0;"
             "test %1, %1;"
             "cmovz %3, %0;"
             : "=&r" (result)
-            : "r" (pred), "r" (t_val), "r" (f_val)
+            : "r" (pred), "r" (t_val), "r" (f_val), "m" (out)
             : "cc"
             );
+    *out = result;
+}
+template <typename T>
+T ObliviousChoose(bool pred, const T& t_val, const T& f_val) {
+    T result;
+    ObliviousAssign(pred, t_val, f_val, &result);
     return result;
+}
+
+template <typename T>
+T o_array_access (T *arr, int i, size_t n) {
+    T result = arr[0];
+    for (int j = 0; j < n; j++) {
+        result = ObliviousChoose(ObliviousEqual(j, i), arr[j], result);
+    }
+    return result;
+}
+
+template <typename T>
+void o_array_assign(T *arr, int i, size_t n, T val) {
+    for (int j = 0; j < n; j++) {
+        arr[j] = ObliviousChoose(ObliviousEqual(j, i), val, arr[j]);
+    }
 }
 
 /***************************************************************************************
@@ -172,11 +196,11 @@ inline void imperative_o_merge(uint32_t* arr, uint32_t low, uint32_t len, bool a
                 if (i2 >= low + len) 
                     break;
                 bool to_swap = ((arr[i1] > arr[i2]) == ascending);
-                bool pred = o_greater(arr[i1], arr[i2]);
-                pred = o_equal(pred, ascending);
+                bool pred = ObliviousGreater(arr[i1], arr[i2]);
+                pred = ObliviousEqual(pred, ascending);
                 uint32_t tmp = arr[i1];
-                arr[i1] = o_assign(pred, arr[i2], arr[i1]);
-                arr[i2] = o_assign(pred, tmp, arr[i2]);
+                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
+                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
             }
         }
     } 
@@ -191,17 +215,17 @@ inline void imperative_o_sort(uint32_t* arr, size_t n, bool ascending) {
                 uint32_t ij = i ^ j;
                 if (ij > i) {
                     if ((i & k) == 0) {
-                        bool pred = o_greater(arr[i], arr[ij]);
-                        pred = o_equal(pred, ascending);
+                        bool pred = ObliviousGreater(arr[i], arr[ij]);
+                        pred = ObliviousEqual(pred, ascending);
                         uint32_t tmp = arr[i];
-                        arr[i] = o_assign(pred, arr[ij], arr[i]);
-                        arr[ij] = o_assign(pred, tmp, arr[ij]);
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     } else {
-                        bool pred = o_greater(arr[ij], arr[i]);
-                        pred = o_equal(pred, ascending);
+                        bool pred = ObliviousGreater(arr[ij], arr[i]);
+                        pred = ObliviousEqual(pred, ascending);
                         uint32_t tmp = arr[i];
-                        arr[i] = o_assign(pred, arr[ij], arr[i]);
-                        arr[ij] = o_assign(pred, tmp, arr[ij]);
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     }
                 }
             }
@@ -222,3 +246,192 @@ void o_sort(uint32_t* arr, uint32_t low, uint32_t len, bool ascending) {
         }
     }
 }
+
+
+// Imperative implementation of bitonic merge network
+template <typename T>
+inline void imperative_o_merge(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    uint32_t i, j, k;
+    uint32_t l = log2_ceil(len);
+    uint32_t n = 1 << l;
+    for (i = 0; i < l; i++) {
+        for (j = 0; j < n; j += n >> i) {
+            for (k = 0; k < (n >> i) / 2; k++) {
+                uint32_t i1 = low + k + j;
+                uint32_t i2 = i1 + (n >> i) / 2;
+                if (i2 >= low + len) 
+                    break;
+                bool to_swap = ((arr[i1] > arr[i2]) == ascending);
+                bool pred = ObliviousGreater(arr[i1], arr[i2]);
+                pred = ObliviousEqual(pred, ascending);
+                T tmp = arr[i1];
+                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
+                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
+            }
+        }
+    } 
+}
+
+// Imperative implementation of bitonic sorting network -- works only for powers of 2
+template <typename T>
+inline void imperative_o_sort(T* arr, size_t n, bool ascending) {
+    uint32_t i, j, k;
+    for (k = 2; k <= n; k = 2 * k) {
+        for (j = k >> 1; j > 0; j = j >> 1) {
+            for (i = 0; i < n; i++) {
+                uint32_t ij = i ^ j;
+                if (ij > i) {
+                    if ((i & k) == 0) {
+                        bool pred = ObliviousGreater(arr[i], arr[ij]);
+                        pred = ObliviousEqual(pred, ascending);
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                    } else {
+                        bool pred = ObliviousGreater(arr[ij], arr[i]);
+                        pred = ObliviousEqual(pred, ascending);
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Sort <len> elements in arr -- starting from index arr[low]
+template <typename T>
+void o_sort(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    if (len > 1) {
+        uint32_t m = greatest_power_of_two_less_than(len);
+        if (m * 2 == len) {
+            imperative_o_sort(arr + low, len, ascending);
+        } else {
+            imperative_o_sort(arr + low, m, !ascending);
+            o_sort(arr, low + m, len - m, ascending);
+            imperative_o_merge(arr, low, len, ascending);
+        }
+    }
+}
+
+/***************************************************************************************
+ * Testing
+ **************************************************************************************/
+
+void test(const char* name, bool cond) {
+    printf("%s : ", name);
+    if (cond)
+        printf("pass\n");
+    else
+        printf("fail\n");
+}
+void test_ObliviousGreater() {
+    // Test generic cases
+    test("4 > 5", ObliviousGreater(4,5) == 4 > 5);
+    test("5 > 4", ObliviousGreater(5,4) == 5 > 4);
+    test("4 > 4", ObliviousGreater(4,4) == 4 > 4);
+
+    // Test negative cases
+    test("-4 > 4", ObliviousGreater(-4,4) == -4 > 4);
+    test("4 > -4", ObliviousGreater(4, -4) == 4 > -4);
+    test("-4 > -5", ObliviousGreater(-4, -5) == -4 > -5);
+    test("-5 > -4", ObliviousGreater(-5, -4) == -5 > -4);
+
+    // Test floating point
+    test("-4. > -3.", ObliviousGreater(-4., -3.) == -4. > -3.);
+    test("-4.1 > -4.2", ObliviousGreater(-4.1, -4.2) == -4.1 > -4.2);
+    test("-4.2 > -4.1", ObliviousGreater(-4.2, -4.1) == -4.2 > -4.1);
+    test("-4. > -4.", ObliviousGreater(-4., -4.) == -4. > -4.);
+    test(".4 > .3", ObliviousGreater(.4, .3) == .4 > .3);
+    test(".4 > .5", ObliviousGreater(.4, .5) == .4 > .5);
+
+    // Test integer overflow
+    test("(int32_t) 2147483648 > 42", !ObliviousGreater((int32_t)2147483648, 42));
+    test("2147483648 > 42", ObliviousGreater(2147483648, (int64_t) 42));
+}
+void test_ObliviousLess() {
+    // Test generic cases
+    test("4 < 5", ObliviousLess(4,5) == 4 < 5);
+    test("5 < 4", ObliviousLess(5,4) == 5 < 4);
+    test("4 < 4", ObliviousLess(4,4) == 4 < 4);
+
+    // Test negative cases
+    test("-4 < 4", ObliviousLess(-4,4) == -4 < 4);
+    test("4 < -4", ObliviousLess(4, -4) == 4 < -4);
+    test("-4 < -5", ObliviousLess(-4, -5) == -4 < -5);
+    test("-5 < -4", ObliviousLess(-5, -4) == -5 < -4);
+
+    // Test floating point
+    test("-4. < -3.", ObliviousLess(-4., -3.) == -4. < -3.);
+    test("-4.1 < -4.2", ObliviousLess(-4.1, -4.2) == -4.1 < -4.2);
+    test("-4.2 < -4.1", ObliviousLess(-4.2, -4.1) == -4.2 < -4.1);
+    test("-4. < -4.", ObliviousLess(-4., -4.) == -4. < -4.);
+    test(".4 < .3", ObliviousLess(.4, .3) == .4 < .3);
+    test(".4 < .5", ObliviousLess(.4, .5) == .4 < .5);
+
+    // Test integer overflow
+    test("(int32_t) 2147483648 < 42", ObliviousLess((int32_t)2147483648, 42));
+    test("2147483648 < 42", !ObliviousLess(2147483648, (int64_t) 42));
+}
+void test_ObliviousEqual() {
+    // Test generic cases
+    test("4 == 5", ObliviousEqual(4,5) == (4==5));
+    test("5 == 4", ObliviousEqual(5,4) == (5==4));
+    test("4 == 4", ObliviousEqual(4,4) == (4==4));
+
+    // Test negative cases
+    test("-4 == 4", ObliviousEqual(-4,4) == (-4==4));
+    test("4 == -4", ObliviousEqual(4, -4) == (4==-4));
+    test("-4 == -5", ObliviousEqual(-4, -5) == (-4==-5));
+    test("-5 == -4", ObliviousEqual(-5, -4) == (-5==-4));
+    test("-4 == -4", ObliviousEqual(-4,-4) == (-4==-4));
+
+    // Test floating point
+    test("-4. == -3.", ObliviousEqual(-4., -3.) == (-4.==-3.));
+    test("-4.1 == -4.2", ObliviousEqual(-4.1, -4.2) == (-4.1==-4.2));
+    test("-4.2 == -4.1", ObliviousEqual(-4.2, -4.1) == (-4.2==-4.1));
+    test(".4 == .3", ObliviousEqual(.4, .3) == (.4==.3));
+    test(".4 == .5", ObliviousEqual(.4, .5) == (.4==.5));
+    test(".4 == .400001", ObliviousEqual(.4, .400001) == (.4==.4000001));
+    test("-4. == -4.", ObliviousEqual(-4., -4.) == (-4.==-4.));
+    test("4. == 4.", ObliviousEqual(4., 4.) == (4.==4.));
+}
+void test_ObliviousAssign() {
+    test(" (true, 4, 5) ", ObliviousChoose(true, 4, 5) == 4);
+    test(" (false, 4, 5)", ObliviousChoose(false, 4, 5) == 5);
+    test(" (true, -4, 5) ", ObliviousChoose(true, -4, 5) == -4);
+    test(" (false, 4, -5)", ObliviousChoose(false, 4, -5) == -5);
+    test(" (true, -4.2, 5.) ", ObliviousChoose(true, -4.2, 5.4) == -4.2);
+    test(" (false, 4.23, 5.34)", ObliviousChoose(false, 4.23, 5.34) == 5.34);
+    test(" (false, -4.23, -5.34)", ObliviousChoose(false, -4.23, -5.34) == -5.34);
+    test(" (false, 4.23, -5.34)", ObliviousChoose(false, 4.23, -5.34) == -5.34);
+    test(" (true, 4.23, -5.34)", ObliviousChoose(true, 4.23, -5.34) == 4.23);
+}
+void test_ObliviousSort() {
+    double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
+    o_sort(d_arr, 0, 5, true);
+    for (int i = 0; i < 5; i++) {
+        printf("%f ", d_arr[i]);
+    }
+    printf("\n");
+
+    int int_arr[5] = {2, 3, 1, -2, -1};
+    o_sort(int_arr, 0, 5, true);
+    for (int i = 0; i < 5; i++) {
+        printf("%d ", int_arr[i]);
+    }
+    printf("\n");
+}
+
+/***************************************************************************************
+ * Main
+ **************************************************************************************/
+
+// int main() {
+//     test_ObliviousGreater();
+//     test_ObliviousLess();
+//     test_ObliviousEqual();
+//     test_ObliviousAssign();
+//     test_ObliviousSort();
+// }
