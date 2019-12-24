@@ -1,5 +1,4 @@
 #include <iostream>
-#include <algorithm>
 #include "obl_primitives.h"
 
 /***************************************************************************************
@@ -223,71 +222,6 @@ void o_array_assign(T *arr, int i, size_t n, T val) {
  **************************************************************************************/
 
 // Imperative implementation of bitonic merge network
-inline void imperative_o_merge(uint32_t* arr, uint32_t low, uint32_t len, bool ascending) {
-    uint32_t i, j, k;
-    uint32_t l = log2_ceil(len);
-    uint32_t n = 1 << l;
-    for (i = 0; i < l; i++) {
-        for (j = 0; j < n; j += n >> i) {
-            for (k = 0; k < (n >> i) / 2; k++) {
-                uint32_t i1 = low + k + j;
-                uint32_t i2 = i1 + (n >> i) / 2;
-                if (i2 >= low + len) 
-                    break;
-                bool to_swap = ((arr[i1] > arr[i2]) == ascending);
-                bool pred = ObliviousGreater(arr[i1], arr[i2]);
-                pred = ObliviousEqual(pred, ascending);
-                uint32_t tmp = arr[i1];
-                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
-                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
-            }
-        }
-    } 
-}
-
-// Imperative implementation of bitonic sorting network -- works only for powers of 2
-inline void imperative_o_sort(uint32_t* arr, size_t n, bool ascending) {
-    uint32_t i, j, k;
-    for (k = 2; k <= n; k = 2 * k) {
-        for (j = k >> 1; j > 0; j = j >> 1) {
-            for (i = 0; i < n; i++) {
-                uint32_t ij = i ^ j;
-                if (ij > i) {
-                    if ((i & k) == 0) {
-                        bool pred = ObliviousGreater(arr[i], arr[ij]);
-                        pred = ObliviousEqual(pred, ascending);
-                        uint32_t tmp = arr[i];
-                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
-                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
-                    } else {
-                        bool pred = ObliviousGreater(arr[ij], arr[i]);
-                        pred = ObliviousEqual(pred, ascending);
-                        uint32_t tmp = arr[i];
-                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
-                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Sort <len> elements in arr -- starting from index arr[low]
-void o_sort(uint32_t* arr, uint32_t low, uint32_t len, bool ascending) {
-    if (len > 1) {
-        uint32_t m = greatest_power_of_two_less_than(len);
-        if (m * 2 == len) {
-            imperative_o_sort(arr + low, len, ascending);
-        } else {
-            imperative_o_sort(arr + low, m, !ascending);
-            o_sort(arr, low + m, len - m, ascending);
-            imperative_o_merge(arr, low, len, ascending);
-        }
-    }
-}
-
-
-// Imperative implementation of bitonic merge network
 template <typename T>
 inline void imperative_o_merge(T* arr, uint32_t low, uint32_t len, bool ascending) {
     uint32_t i, j, k;
@@ -303,9 +237,9 @@ inline void imperative_o_merge(T* arr, uint32_t low, uint32_t len, bool ascendin
                 bool to_swap = ((arr[i1] > arr[i2]) == ascending);
                 bool pred = ObliviousGreater(arr[i1], arr[i2]);
                 pred = ObliviousEqual(pred, ascending);
-                T tmp = arr[i1];
-                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
-                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
+                T tmp = o_array_access(arr, i1, len);
+                o_array_assign(arr, i1, len, ObliviousChoose(pred, arr[i2], arr[i1]));
+                o_array_assign(arr, i2, len, ObliviousChoose(pred, tmp, arr[i2]));
             }
         }
     } 
@@ -323,15 +257,15 @@ inline void imperative_o_sort(T* arr, size_t n, bool ascending) {
                     if ((i & k) == 0) {
                         bool pred = ObliviousGreater(arr[i], arr[ij]);
                         pred = ObliviousEqual(pred, ascending);
-                        T tmp = arr[i];
-                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
-                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                        T tmp = o_array_access(arr, i, n);
+                        o_array_assign(arr, i, n, ObliviousChoose(pred, arr[ij], arr[i]));
+                        o_array_assign(arr, ij, n, ObliviousChoose(pred, tmp, arr[ij]));
                     } else {
                         bool pred = ObliviousGreater(arr[ij], arr[i]);
                         pred = ObliviousEqual(pred, ascending);
-                        T tmp = arr[i];
-                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
-                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                        T tmp = o_array_access(arr, i, n);
+                        o_array_assign(arr, i, n, ObliviousChoose(pred, arr[ij], arr[i]));
+                        o_array_assign(arr, ij, n, ObliviousChoose(pred, tmp, arr[ij]));
                     }
                 }
             }
@@ -471,17 +405,24 @@ void test_ObliviousAssign() {
 }
 void test_ObliviousSort() {
     double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
+    bool pass = true;
     o_sort(d_arr, 0, 5, true);
+
     for (int i = 0; i < 5; i++) {
         printf("%f ", d_arr[i]);
+        if (i < 4) pass = (pass && (d_arr[i] <= d_arr[i+1]));
     }
+    if (pass) printf(" : pass");
     printf("\n");
 
     int int_arr[5] = {2, 3, 1, -2, -1};
     o_sort(int_arr, 0, 5, true);
+    pass = true;
     for (int i = 0; i < 5; i++) {
         printf("%d ", int_arr[i]);
+        if (i < 4) pass = (pass && (d_arr[i] <= d_arr[i+1]));
     }
+    if (pass) printf(" : pass");
     printf("\n");
 }
 
