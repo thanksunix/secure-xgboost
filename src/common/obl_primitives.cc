@@ -182,7 +182,7 @@ void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
         f += 4;
     }
 
-    // Oblivously assign 2 bytes
+    // Obliviously assign 2 bytes
     if ((bytes % 4) / 2) {
         ObliviousAssign(pred, *((uint16_t*)t), *((uint16_t*)f), (uint16_t*)res);
         res += 2;
