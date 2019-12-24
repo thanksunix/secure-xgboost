@@ -143,6 +143,7 @@ uint8_t ObliviousLessOrEqual(double x, double y) {
     return result; 
 }
 
+// Fill OUT with (pred) ? t_val : f_val. Supports 16, 32, and 64 bit types
 template <typename T>
 void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
     T result;
@@ -156,10 +157,48 @@ void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
             );
     *out = result;
 }
+// Iteratively apply `ObliviousAssign` to fill generic types of size > 1 byte
+template <typename T>
+void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
+    char *res = (char*) out;
+    char *t = (char*) &t_val;
+    char *f = (char*) &f_val;
+
+    // Obliviously assign 8 bytes at a time
+    size_t num_8_iter = bytes / 8;
+    #pragma omp simd
+    for (int i = 0; i < num_8_iter; i++) {
+        ObliviousAssign(pred, *((uint64_t*)t), *((uint64_t*)f), (uint64_t*)res);
+        res += 8;
+        t += 8;
+        f += 8;
+    }
+
+    // Obliviously assign 4 bytes
+    if ((bytes % 8) / 4) {
+        ObliviousAssign(pred, *((uint32_t*)t), *((uint32_t*)f), (uint32_t*)res);
+        res += 4;
+        t += 4;
+        f += 4;
+    }
+
+    // Oblivously assign 2 bytes
+    if ((bytes % 4) / 2) {
+        ObliviousAssign(pred, *((uint16_t*)t), *((uint16_t*)f), (uint16_t*)res);
+        res += 2;
+        t += 2;
+        f += 4;
+    }
+
+    if ((bytes % 2)) {
+        ObliviousAssign(pred, *((uint16_t*)t), *((uint16_t*)f), (uint16_t*)res);
+    }
+}
+// Return (pred) ? t_val : f_val. Supports types of size > 1 byte
 template <typename T>
 T ObliviousChoose(bool pred, const T& t_val, const T& f_val) {
     T result;
-    ObliviousAssign(pred, t_val, f_val, &result);
+    ObliviousAssignEx(pred, t_val, f_val, sizeof result, &result);
     return result;
 }
 
@@ -318,7 +357,20 @@ void o_sort(T* arr, uint32_t low, uint32_t len, bool ascending) {
 /***************************************************************************************
  * Testing
  **************************************************************************************/
+struct Generic {
+    double x;
+    short y;
+    double z;
 
+    Generic() = default;
+
+    Generic(double x, short y, double z)
+        : x(x), y(y), z(z) {}
+
+    inline bool operator<(const Generic &b) const {
+        return ObliviousLess(x, b.x);
+    }
+};
 void test(const char* name, bool cond) {
     printf("%s : ", name);
     if (cond)
@@ -407,6 +459,15 @@ void test_ObliviousAssign() {
     test(" (false, -4.23, -5.34)", ObliviousChoose(false, -4.23, -5.34) == -5.34);
     test(" (false, 4.23, -5.34)", ObliviousChoose(false, 4.23, -5.34) == -5.34);
     test(" (true, 4.23, -5.34)", ObliviousChoose(true, 4.23, -5.34) == 4.23);
+
+    Generic g_a = Generic(-1.35, 2, 3.21);
+    Generic g_b = Generic(4.123, 5, 6.432);
+    Generic g_c = ObliviousChoose(true, g_a, g_b);
+    test(" (true, (-1.35, 2, 3.21), (4.123, 5, 6.432)) ",
+        (g_c.x == -1.35 && g_c.y == 2 && g_c.z == 3.21));
+    g_c = ObliviousChoose(false, g_a, g_b);
+    test(" (false, (-1.35, 2, 3.21), (4.123, 5, 6.432)) ",
+        (g_c.x == 4.123 && g_c.y == 5 && g_c.z == 6.432));
 }
 void test_ObliviousSort() {
     double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
@@ -428,10 +489,10 @@ void test_ObliviousSort() {
  * Main
  **************************************************************************************/
 
-// int main() {
-//     test_ObliviousGreater();
-//     test_ObliviousLess();
-//     test_ObliviousEqual();
-//     test_ObliviousAssign();
-//     test_ObliviousSort();
-// }
+int main() {
+    test_ObliviousGreater();
+    test_ObliviousLess();
+    test_ObliviousEqual();
+    test_ObliviousAssign();
+    test_ObliviousSort();
+}
