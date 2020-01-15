@@ -26,4 +26,10 @@ T ObliviousChoose(bool pred, const T& t_val, const T& f_val);
 template <typename T>
 void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out);
 
+template <typename T>
+void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending);
+
+template <typename T>
+void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending);
+
 #endif // OBL_PRIMITIVES_H_

@@ -142,7 +142,7 @@ uint8_t ObliviousLessOrEqual(double x, double y) {
     return result; 
 }
 
-// Fill OUT with (pred) ? t_val : f_val. Supports 16, 32, and 64 bit types
+// Fill `out` with (pred ? t_val : f_val). Supports 16, 32, and 64 bit types
 template <typename T>
 void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
     T result;
@@ -156,6 +156,7 @@ void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
             );
     *out = result;
 }
+
 // Iteratively apply `ObliviousAssign` to fill generic types of size > 1 byte
 template <typename T>
 void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
@@ -193,7 +194,8 @@ void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
         ObliviousAssign(pred, *((uint16_t*)t), *((uint16_t*)f), (uint16_t*)res);
     }
 }
-// Return (pred) ? t_val : f_val. Supports types of size > 1 byte
+
+// Return (pred ? t_val : f_val). Supports types of size > 1 byte
 template <typename T>
 T ObliviousChoose(bool pred, const T& t_val, const T& f_val) {
     T result;
@@ -201,6 +203,7 @@ T ObliviousChoose(bool pred, const T& t_val, const T& f_val) {
     return result;
 }
 
+// Return arr[i]
 template <typename T>
 T o_array_access (T *arr, int i, size_t n) {
     T result = arr[0];
@@ -210,6 +213,7 @@ T o_array_access (T *arr, int i, size_t n) {
     return result;
 }
 
+// Set arr[i] = val
 template <typename T>
 void o_array_assign(T *arr, int i, size_t n, T val) {
     for (int j = 0; j < n; j++) {
@@ -237,9 +241,33 @@ inline void imperative_o_merge(T* arr, uint32_t low, uint32_t len, bool ascendin
                 bool to_swap = ((arr[i1] > arr[i2]) == ascending);
                 bool pred = ObliviousGreater(arr[i1], arr[i2]);
                 pred = ObliviousEqual(pred, ascending);
-                T tmp = o_array_access(arr, i1, len);
-                o_array_assign(arr, i1, len, ObliviousChoose(pred, arr[i2], arr[i1]));
-                o_array_assign(arr, i2, len, ObliviousChoose(pred, tmp, arr[i2]));
+                T tmp = arr[i1];
+                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
+                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
+            }
+        }
+    } 
+}
+
+// Imperative implementation of bitonic merge network for POD type
+// Assumes T implements T::ogreater
+template <typename T>
+inline void imperative_o_merge_pod(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    uint32_t i, j, k;
+    uint32_t l = log2_ceil(len);
+    uint32_t n = 1 << l;
+    for (i = 0; i < l; i++) {
+        for (j = 0; j < n; j += n >> i) {
+            for (k = 0; k < (n >> i) / 2; k++) {
+                uint32_t i1 = low + k + j;
+                uint32_t i2 = i1 + (n >> i) / 2;
+                if (i2 >= low + len) 
+                    break;
+                bool pred = T::ogreater(arr[i1], arr[i2]);
+                pred = ObliviousEqual(pred, ascending);
+                T tmp = arr[i1];
+                arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
+                arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
             }
         }
     } 
@@ -257,15 +285,44 @@ inline void imperative_o_sort(T* arr, size_t n, bool ascending) {
                     if ((i & k) == 0) {
                         bool pred = ObliviousGreater(arr[i], arr[ij]);
                         pred = ObliviousEqual(pred, ascending);
-                        T tmp = o_array_access(arr, i, n);
-                        o_array_assign(arr, i, n, ObliviousChoose(pred, arr[ij], arr[i]));
-                        o_array_assign(arr, ij, n, ObliviousChoose(pred, tmp, arr[ij]));
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     } else {
                         bool pred = ObliviousGreater(arr[ij], arr[i]);
                         pred = ObliviousEqual(pred, ascending);
-                        T tmp = o_array_access(arr, i, n);
-                        o_array_assign(arr, i, n, ObliviousChoose(pred, arr[ij], arr[i]));
-                        o_array_assign(arr, ij, n, ObliviousChoose(pred, tmp, arr[ij]));
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Imperative implementation of bitonic sorting network for POD type -- works only for powers of 2
+// Assumes T implements T::ogreater
+template <typename T>
+inline void imperative_o_sort_pod(T* arr, size_t n, bool ascending) {
+    uint32_t i, j, k;
+    for (k = 2; k <= n; k = 2 * k) {
+        for (j = k >> 1; j > 0; j = j >> 1) {
+            for (i = 0; i < n; i++) {
+                uint32_t ij = i ^ j;
+                if (ij > i) {
+                    if ((i & k) == 0) {
+                        bool pred = T::ogreater(arr[i], arr[ij]);
+                        pred = ObliviousEqual(pred, ascending);
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
+                    } else {
+                        bool pred = T::ogreater(arr[ij], arr[i]);
+                        pred = ObliviousEqual(pred, ascending);
+                        T tmp = arr[i];
+                        arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
+                        arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     }
                 }
             }
@@ -288,6 +345,40 @@ void o_sort(T* arr, uint32_t low, uint32_t len, bool ascending) {
     }
 }
 
+// Sort <len> elements in arr of POD type -- starting from index arr[low]
+// Assumes T implements T::ogreater
+template <typename T>
+void o_sort_pod(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    if (len > 1) {
+        uint32_t m = greatest_power_of_two_less_than(len);
+        if (m * 2 == len) {
+            imperative_o_sort_pod(arr + low, len, ascending);
+        } else {
+            imperative_o_sort_pod(arr + low, m, !ascending);
+            o_sort_pod(arr, low + m, len - m, ascending);
+            imperative_o_merge_pod(arr, low, len, ascending);
+        }
+    }
+}
+
+template <typename T>
+void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    if (std::is_fundamental<T>::value) {
+        imperative_o_merge(arr, low, len, ascending);
+    } else {
+        imperative_o_merge_pod(arr, low, len, ascending);
+    }
+}
+
+template <typename T>
+void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    if (std::is_fundamental<T>::value) {
+        o_sort(arr, low, len, ascending);
+    } else {
+        o_sort_pod(arr, low, len, ascending);
+    }
+}
+
 /***************************************************************************************
  * Testing
  **************************************************************************************/
@@ -302,9 +393,17 @@ struct Generic {
         : x(x), y(y), z(z) {}
 
     inline bool operator<(const Generic &b) const {
-        return ObliviousLess(x, b.x);
+        return (x < b.x);
+    }
+    inline bool operator<=(const Generic &b) const {
+        return (x <= b.x);
+    }
+    
+    static inline bool ogreater(Generic a, Generic b) {
+        return ObliviousGreater(a.x, b.x);
     }
 };
+
 void test(const char* name, bool cond) {
     printf("%s : ", name);
     if (cond)
@@ -424,6 +523,16 @@ void test_ObliviousSort() {
     }
     if (pass) printf(" : pass");
     printf("\n");
+    
+    Generic g_arr[5] = {Generic(-1.35, 2, 3.21), Generic(4.123, 5, 6.432), Generic(-5.123, 3, 7.432), Generic(6.123, 1, 1.432), Generic(-3.123, 4, 0.432)};
+    o_sort_pod(g_arr, 0, 5, true);
+    pass = true;
+    for (int i = 0; i < 5; i++) {
+        printf("%f,%d,%f -- ", g_arr[i].x, g_arr[i].y, g_arr[i].z);
+        if (i < 4) pass = (pass && (g_arr[i] <= g_arr[i+1]));
+    }
+    if (pass) printf(" : pass");
+    printf("\n");
 }
 
 /***************************************************************************************
@@ -437,3 +546,4 @@ int main() {
     test_ObliviousAssign();
     test_ObliviousSort();
 }
+
