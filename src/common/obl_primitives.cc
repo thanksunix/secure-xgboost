@@ -205,19 +205,25 @@ T ObliviousChoose(bool pred, const T& t_val, const T& f_val) {
 
 // Return arr[i]
 template <typename T>
-T o_array_access (T *arr, int i, size_t n) {
+T ObliviousArrayAccess(T *arr, int i, size_t n) {
     T result = arr[0];
-    for (int j = 0; j < n; j++) {
-        result = ObliviousChoose(ObliviousEqual(j, i), arr[j], result);
+    int step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
+    for (int j = 0; j < n; j += step) {
+        bool cond = ObliviousEqual(j/step, i/step);
+        int pos = ObliviousChoose(cond, i, j);
+        result = ObliviousChoose(cond, arr[pos], result);
     }
     return result;
 }
 
 // Set arr[i] = val
 template <typename T>
-void o_array_assign(T *arr, int i, size_t n, T val) {
-    for (int j = 0; j < n; j++) {
-        arr[j] = ObliviousChoose(ObliviousEqual(j, i), val, arr[j]);
+void ObliviousArrayAssign(T *arr, int i, size_t n, T val) {
+    int step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
+    for (int j = 0; j < n; j += step) {
+        bool cond = ObliviousEqual(j/step, i/step);
+        int pos = ObliviousChoose(cond, i, j);
+        arr[pos] = ObliviousChoose(cond, val, arr[pos]);
     }
 }
 
@@ -238,9 +244,9 @@ inline void imperative_o_merge(T* arr, uint32_t low, uint32_t len, bool ascendin
                 uint32_t i2 = i1 + (n >> i) / 2;
                 if (i2 >= low + len) 
                     break;
-                bool to_swap = ((arr[i1] > arr[i2]) == ascending);
                 bool pred = ObliviousGreater(arr[i1], arr[i2]);
                 pred = ObliviousEqual(pred, ascending);
+                // These array accesses are oblivious because the indices are deterministic
                 T tmp = arr[i1];
                 arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
                 arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
@@ -265,6 +271,7 @@ inline void imperative_o_merge_pod(T* arr, uint32_t low, uint32_t len, bool asce
                     break;
                 bool pred = T::ogreater(arr[i1], arr[i2]);
                 pred = ObliviousEqual(pred, ascending);
+                // These array accesses are oblivious because the indices are deterministic
                 T tmp = arr[i1];
                 arr[i1] = ObliviousChoose(pred, arr[i2], arr[i1]);
                 arr[i2] = ObliviousChoose(pred, tmp, arr[i2]);
@@ -285,12 +292,14 @@ inline void imperative_o_sort(T* arr, size_t n, bool ascending) {
                     if ((i & k) == 0) {
                         bool pred = ObliviousGreater(arr[i], arr[ij]);
                         pred = ObliviousEqual(pred, ascending);
+                        // These array accesses are oblivious because the indices are deterministic
                         T tmp = arr[i];
                         arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
                         arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     } else {
                         bool pred = ObliviousGreater(arr[ij], arr[i]);
                         pred = ObliviousEqual(pred, ascending);
+                        // These array accesses are oblivious because the indices are deterministic
                         T tmp = arr[i];
                         arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
                         arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
@@ -314,12 +323,14 @@ inline void imperative_o_sort_pod(T* arr, size_t n, bool ascending) {
                     if ((i & k) == 0) {
                         bool pred = T::ogreater(arr[i], arr[ij]);
                         pred = ObliviousEqual(pred, ascending);
+                        // These array accesses are oblivious because the indices are deterministic
                         T tmp = arr[i];
                         arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
                         arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
                     } else {
                         bool pred = T::ogreater(arr[ij], arr[i]);
                         pred = ObliviousEqual(pred, ascending);
+                        // These array accesses are oblivious because the indices are deterministic
                         T tmp = arr[i];
                         arr[i] = ObliviousChoose(pred, arr[ij], arr[i]);
                         arr[ij] = ObliviousChoose(pred, tmp, arr[ij]);
@@ -402,6 +413,16 @@ struct Generic {
     static inline bool ogreater(Generic a, Generic b) {
         return ObliviousGreater(a.x, b.x);
     }
+};
+
+struct Generic_16B {
+    double x;
+    uint64_t y;
+
+    Generic_16B() = default;
+
+    Generic_16B(double x, uint64_t y)
+        : x(x), y(y) {}
 };
 
 void test(const char* name, bool cond) {
@@ -511,7 +532,10 @@ void test_ObliviousSort() {
         printf("%f ", d_arr[i]);
         if (i < 4) pass = (pass && (d_arr[i] <= d_arr[i+1]));
     }
-    if (pass) printf(" : pass");
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
     printf("\n");
 
     int int_arr[5] = {2, 3, 1, -2, -1};
@@ -521,7 +545,10 @@ void test_ObliviousSort() {
         printf("%d ", int_arr[i]);
         if (i < 4) pass = (pass && (d_arr[i] <= d_arr[i+1]));
     }
-    if (pass) printf(" : pass");
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
     printf("\n");
     
     Generic g_arr[5] = {Generic(-1.35, 2, 3.21), Generic(4.123, 5, 6.432), Generic(-5.123, 3, 7.432), Generic(6.123, 1, 1.432), Generic(-3.123, 4, 0.432)};
@@ -531,7 +558,108 @@ void test_ObliviousSort() {
         printf("%f,%d,%f -- ", g_arr[i].x, g_arr[i].y, g_arr[i].z);
         if (i < 4) pass = (pass && (g_arr[i] <= g_arr[i+1]));
     }
-    if (pass) printf(" : pass");
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
+    printf("\n");
+}
+void test_ObliviousArrayAccess() {
+    double d_arr[100]; 
+    for (int i = 0; i < 100; i++) {
+        d_arr[i] = i + 0.5;
+    }
+    bool pass = true;
+    for (int i = 0; i < 100; i++) {
+        double val = ObliviousArrayAccess(d_arr, i, 100);
+        if (i % 10 == 0)
+            printf("%f ", val);
+        pass = pass && (val == d_arr[i]);
+    }
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
+    printf("\n");
+
+    int i_arr[100]; 
+    for (int i = 0; i < 100; i++) {
+        i_arr[i] = i;
+    }
+    pass = true;
+    for (int i = 0; i < 100; i++) {
+        int val = ObliviousArrayAccess(i_arr, i, 100);
+        if (i % 10 == 0)
+            printf("%d ", val);
+        pass = pass && (val == i_arr[i]);
+    }
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
+    printf("\n");
+
+    Generic_16B g_arr[100]; 
+    for (int i = 0; i < 100; i++) {
+        g_arr[i] = Generic_16B(i+0.5, i);
+    }
+    pass = true;
+    for (int i = 0; i < 100; i++) {
+        Generic_16B val = ObliviousArrayAccess(g_arr, i, 100);
+        if (i % 10 == 0)
+            printf("%f,%llu ", val.x, val.y);
+        pass = pass && (val.x == g_arr[i].x) && (val.y == g_arr[i].y);
+    }
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
+    printf("\n");
+}
+
+void test_ObliviousArrayAssign() {
+    bool pass = true;
+    for (int i = 0; i < 100; i++) {
+        double d_arr[100]; 
+        for (int i = 0; i < 100; i++) {
+            d_arr[i] = i + 0.5;
+        }
+        ObliviousArrayAssign(d_arr, i, 100, 999.0);
+        if (i % 10 == 0)
+            printf("%f ", d_arr[i]);
+        for (int j = 0; j < 100; j++) {
+            if (i == j)
+                pass = pass && (d_arr[j] == 999);
+            else
+                pass = pass && (d_arr[j] == j + 0.5);
+        }
+    }
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
+    printf("\n");
+
+    pass = true;
+    for (int i = 0; i < 100; i++) {
+        Generic_16B g_arr[100]; 
+        for (int i = 0; i < 100; i++) {
+            g_arr[i] = Generic_16B(i+0.5, i);
+        }
+        ObliviousArrayAssign(g_arr, i, 100, Generic_16B(999.0, 999));
+        if (i % 10 == 0)
+            printf("%f,%llu ", g_arr[i].x, g_arr[i].y);
+        for (int j = 0; j < 100; j++) {
+            if (i == j)
+                pass = pass && (g_arr[j].x == 999.0) && (g_arr[j].y == 999);
+            else
+                pass = pass && (g_arr[j].x == j + 0.5) && (g_arr[j].y == j);
+        }
+    }
+    if (pass) 
+        printf(" : pass");
+    else
+        printf(" : fail");
     printf("\n");
 }
 
@@ -545,5 +673,7 @@ int main() {
     test_ObliviousEqual();
     test_ObliviousAssign();
     test_ObliviousSort();
+    test_ObliviousArrayAccess();
+    test_ObliviousArrayAssign();
 }
 

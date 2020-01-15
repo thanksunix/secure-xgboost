@@ -1,6 +1,8 @@
 #ifndef OBL_PRIMITIVES_H_
 #define OBL_PRIMITIVES_H_
 
+#define CACHE_LINE_SIZE 64
+
 template <typename T>
 uint8_t ObliviousGreater(T x, T y);
 uint8_t ObliviousGreater(double x, double y);
@@ -31,5 +33,11 @@ void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending);
 
 template <typename T>
 void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending);
+
+template <typename T>
+T ObliviousArrayAccess(T *arr, int i, size_t n);
+    
+template <typename T>
+void ObliviousArrayAssign(T *arr, int i, size_t n, T val);
 
 #endif // OBL_PRIMITIVES_H_
