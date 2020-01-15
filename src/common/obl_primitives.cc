@@ -373,21 +373,23 @@ void o_sort_pod(T* arr, uint32_t low, uint32_t len, bool ascending) {
 }
 
 template <typename T>
-void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending) {
-    if (std::is_fundamental<T>::value) {
-        imperative_o_merge(arr, low, len, ascending);
-    } else {
-        imperative_o_merge_pod(arr, low, len, ascending);
-    }
+inline void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    imperative_o_merge(arr, low, len, ascending);
 }
 
 template <typename T>
-void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending) {
-    if (std::is_fundamental<T>::value) {
-        o_sort(arr, low, len, ascending);
-    } else {
-        o_sort_pod(arr, low, len, ascending);
-    }
+inline void ObliviousMergePOD(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    imperative_o_merge_pod(arr, low, len, ascending);
+}
+
+template <typename T>
+inline void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    o_sort(arr, low, len, ascending);
+}
+
+template <typename T>
+inline void ObliviousSortPOD(T* arr, uint32_t low, uint32_t len, bool ascending) {
+    o_sort_pod(arr, low, len, ascending);
 }
 
 /***************************************************************************************
@@ -526,7 +528,7 @@ void test_ObliviousAssign() {
 void test_ObliviousSort() {
     double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
     bool pass = true;
-    o_sort(d_arr, 0, 5, true);
+    ObliviousSort(d_arr, 0, 5, true);
 
     for (int i = 0; i < 5; i++) {
         printf("%f ", d_arr[i]);
@@ -539,7 +541,7 @@ void test_ObliviousSort() {
     printf("\n");
 
     int int_arr[5] = {2, 3, 1, -2, -1};
-    o_sort(int_arr, 0, 5, true);
+    ObliviousSort(int_arr, 0, 5, true);
     pass = true;
     for (int i = 0; i < 5; i++) {
         printf("%d ", int_arr[i]);
@@ -552,7 +554,7 @@ void test_ObliviousSort() {
     printf("\n");
     
     Generic g_arr[5] = {Generic(-1.35, 2, 3.21), Generic(4.123, 5, 6.432), Generic(-5.123, 3, 7.432), Generic(6.123, 1, 1.432), Generic(-3.123, 4, 0.432)};
-    o_sort_pod(g_arr, 0, 5, true);
+    ObliviousSortPOD(g_arr, 0, 5, true);
     pass = true;
     for (int i = 0; i < 5; i++) {
         printf("%f,%d,%f -- ", g_arr[i].x, g_arr[i].y, g_arr[i].z);

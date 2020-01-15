@@ -29,10 +29,14 @@ template <typename T>
 void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out);
 
 template <typename T>
-void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending);
+inline void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending);
+template <typename T>
+inline void ObliviousMergePOD(T* arr, uint32_t low, uint32_t len, bool ascending);
 
 template <typename T>
-void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending);
+inline void ObliviousSort(T* arr, uint32_t low, uint32_t len, bool ascending);
+template <typename T>
+inline void ObliviousSortPOD(T* arr, uint32_t low, uint32_t len, bool ascending);
 
 template <typename T>
 T ObliviousArrayAccess(T *arr, int i, size_t n);
