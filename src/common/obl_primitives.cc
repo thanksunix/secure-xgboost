@@ -44,8 +44,8 @@ uint8_t ObliviousGreater(T x, T y) {
 uint8_t ObliviousGreater(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "movups %1, %%xmm0;"
-            "movups %2, %%xmm1;"
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "seta %0;"
             : "=r" (result)
@@ -71,8 +71,8 @@ uint8_t ObliviousGreaterOrEqual(T x, T y) {
 uint8_t ObliviousGreaterOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "movups %1, %%xmm0;"
-            "movups %2, %%xmm1;"
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setae %0;"
             : "=r" (result)
@@ -112,8 +112,8 @@ uint8_t ObliviousLess(T x, T y) {
 uint8_t ObliviousLess(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "movups %1, %%xmm0;"
-            "movups %2, %%xmm1;"
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setb %0;"
             : "=r" (result)
@@ -139,8 +139,8 @@ uint8_t ObliviousLessOrEqual(T x, T y) {
 uint8_t ObliviousLessOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
-            "movups %1, %%xmm0;"
-            "movups %2, %%xmm1;"
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setbe %0;"
             : "=r" (result)
