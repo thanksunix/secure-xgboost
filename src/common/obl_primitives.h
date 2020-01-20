@@ -27,6 +27,7 @@ T ObliviousChoose(bool pred, const T& t_val, const T& f_val);
 
 template <typename T>
 void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out);
+void ObliviousAssign(bool pred, uint8_t t_val, uint8_t f_val, uint8_t* out);
 
 template <typename T>
 inline void ObliviousMerge(T* arr, uint32_t low, uint32_t len, bool ascending);
