@@ -44,10 +44,12 @@ uint8_t ObliviousGreater(T x, T y) {
 uint8_t ObliviousGreater(double x, double y) {
     uint8_t result;
     __asm__ volatile (
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "seta %0;"
             : "=r" (result)
-            :
+            : "m" (x), "m" (y)
             : "cc"
             );
     return result; 
@@ -69,10 +71,12 @@ uint8_t ObliviousGreaterOrEqual(T x, T y) {
 uint8_t ObliviousGreaterOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setae %0;"
             : "=r" (result)
-            :
+            : "m" (x), "m" (y)
             : "cc"
             );
     return result; 
@@ -108,10 +112,12 @@ uint8_t ObliviousLess(T x, T y) {
 uint8_t ObliviousLess(double x, double y) {
     uint8_t result;
     __asm__ volatile (
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setb %0;"
             : "=r" (result)
-            :
+            : "m" (x), "m" (y)
             : "cc"
             );
     return result; 
@@ -133,10 +139,12 @@ uint8_t ObliviousLessOrEqual(T x, T y) {
 uint8_t ObliviousLessOrEqual(double x, double y) {
     uint8_t result;
     __asm__ volatile (
+            "movsd %1, %%xmm0;"
+            "movsd %2, %%xmm1;"
             "comisd %%xmm1, %%xmm0;"
             "setbe %0;"
             : "=r" (result)
-            :
+            : "m" (x), "m" (y)
             : "cc"
             );
     return result; 
@@ -156,8 +164,13 @@ void ObliviousAssign(bool pred, const T& t_val, const T& f_val, T* out) {
             );
     *out = result;
 }
+void ObliviousAssign(bool pred, uint8_t t_val, uint8_t f_val, uint8_t* out) {
+    uint16_t result;
+    ObliviousAssign(pred, (uint16_t) t_val, (uint16_t) f_val, &result);
+    *out = (uint8_t) result;
+}
 
-// Iteratively apply `ObliviousAssign` to fill generic types of size > 1 byte
+// Iteratively apply `ObliviousAssign` to fill generic types
 template <typename T>
 void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
     char *res = (char*) out;
@@ -190,8 +203,9 @@ void ObliviousAssignEx(bool pred, T t_val, T f_val, size_t bytes, T* out) {
         f += 2;
     }
 
+    // Obliviously assign 1 byte
     if ((bytes % 2)) {
-        ObliviousAssign(pred, *((uint16_t*)t), *((uint16_t*)f), (uint16_t*)res);
+        ObliviousAssign(pred, *((uint8_t*)t), *((uint8_t*)f), (uint8_t*)res);
     }
 }
 
@@ -427,6 +441,12 @@ struct Generic_16B {
         : x(x), y(y) {}
 };
 
+struct Foo {
+    char a;
+    char b;
+    char c;
+};
+
 void test(const char* name, bool cond) {
     printf("%s : ", name);
     if (cond)
@@ -524,6 +544,22 @@ void test_ObliviousAssign() {
     g_c = ObliviousChoose(false, g_a, g_b);
     test(" (false, (-1.35, 2, 3.21), (4.123, 5, 6.432)) ",
         (g_c.x == 4.123 && g_c.y == 5 && g_c.z == 6.432));
+    
+    test(" (false, (uint8_t) 1, (uint8_t) 2) ", ObliviousChoose(false, (uint8_t) 1, (uint8_t) 2) == 2);
+
+    struct Foo foo;
+    foo.a = (char) 1;
+    foo.b = (char) 2;
+    foo.c = (char) 3;
+
+    struct Foo bar;
+    bar.a = (char) 4;
+    bar.b = (char) 5;
+    bar.c = (char) 6;
+
+    struct Foo baz = ObliviousChoose(false, foo, bar);
+    test(" (false, (1,2,3), (4,5,6) ) ",
+            baz.a == (char) 4 && baz.b == (char) 5 && baz.c == (char) 6);
 }
 void test_ObliviousSort() {
     double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
@@ -669,13 +705,13 @@ void test_ObliviousArrayAssign() {
  * Main
  **************************************************************************************/
 
-//int main() {
-//    test_ObliviousGreater();
-//    test_ObliviousLess();
-//    test_ObliviousEqual();
-//    test_ObliviousAssign();
-//    test_ObliviousSort();
-//    test_ObliviousArrayAccess();
-//    test_ObliviousArrayAssign();
-//}
+int main() {
+    //test_ObliviousGreater();
+    //test_ObliviousLess();
+    //test_ObliviousEqual();
+    //test_ObliviousAssign();
+    //test_ObliviousSort();
+    //test_ObliviousArrayAccess();
+    //test_ObliviousArrayAssign(); 
+}
 
