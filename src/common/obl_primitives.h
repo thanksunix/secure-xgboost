@@ -46,17 +46,17 @@ template <typename Iter, typename Comparator>
 inline void ObliviousSort(Iter begin, Iter end, Comparator cmp);
 
 template <typename T>
-inline T ObliviousArrayAccess(T *arr, size_t i, size_t n);
+inline T ObliviousArrayAccess(const T *arr, size_t i, size_t n);
 
 template <typename T>
 inline void ObliviousArrayAssign(T *arr, size_t i, size_t n, const T &val);
 
+void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
+                          const void *f_val, void *out);
+
 // Impl.
 
 namespace obl {
-
-void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
-                          const void *f_val, void *out);
 
 template <typename T,
           typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
@@ -143,9 +143,9 @@ inline bool ObliviousEqual(T x, T y) {
 }
 
 template <typename T,
-    typename std::enable_if<std::is_standard_layout<T>::value, int>::type>
+          typename std::enable_if<std::is_standard_layout<T>::value, int>::type>
 inline void ObliviousAssign(bool pred, const T &t_val, const T &f_val, T *out) {
-  return obl::ObliviousBytesAssign(pred, sizeof(T), &t_val, &f_val, out);
+  return ObliviousBytesAssign(pred, sizeof(T), &t_val, &f_val, out);
 }
 
 template <typename T>
@@ -175,10 +175,10 @@ inline void ObliviousSort(Iter begin, Iter end) {
 
 // Return arr[i]
 template <typename T>
-inline T ObliviousArrayAccess(T *arr, int i, size_t n) {
+inline T ObliviousArrayAccess(const T *arr, size_t i, size_t n) {
   T result = arr[0];
-  int step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
-  for (int j = 0; j < n; j += step) {
+  size_t step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
+  for (size_t j = 0; j < n; j += step) {
     bool cond = ObliviousEqual(j / step, i / step);
     int pos = ObliviousChoose(cond, i, j);
     result = ObliviousChoose(cond, arr[pos], result);
@@ -188,9 +188,9 @@ inline T ObliviousArrayAccess(T *arr, int i, size_t n) {
 
 // Set arr[i] = val
 template <typename T>
-inline void ObliviousArrayAssign(T *arr, int i, size_t n, T val) {
-  int step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
-  for (int j = 0; j < n; j += step) {
+inline void ObliviousArrayAssign(T *arr, size_t i, size_t n, const T& val) {
+  size_t step = sizeof(T) < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / sizeof(T) : 1;
+  for (size_t j = 0; j < n; j += step) {
     bool cond = ObliviousEqual(j / step, i / step);
     int pos = ObliviousChoose(cond, i, j);
     arr[pos] = ObliviousChoose(cond, val, arr[pos]);

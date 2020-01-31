@@ -29,6 +29,18 @@
 
 namespace xgboost {
 namespace tree {
+namespace {
+
+// NOTE: works due to we are expanding a binary complete tree.
+std::pair<size_t, size_t> GetLevelNodeRange(size_t nid) {
+  size_t end_nid = 1;
+  while (nid >= end_nid) {
+    end_nid *= 2;
+  }
+  return std::make_pair(end_nid / 2, end_nid);
+}
+
+}  // namespace
 
 DMLC_REGISTRY_FILE_TAG(updater_quantile_hist);
 
@@ -224,6 +236,8 @@ void QuantileHistMaker::Builder::EvaluateSplits(
       LOG(CONSOLE) << "nid=" << entry.nid << ", hist=" << ss.str();
     }
   }
+
+  LOG(CONSOLE) << "DEBUG: finished at depth=" << depth;
 }
 
 void QuantileHistMaker::Builder::ApplySplitLevelWise(
@@ -270,29 +284,41 @@ void QuantileHistMaker::Builder::ApplySplitLevelWise(
     // Efficient level-wise method. O(n_rows * O(`oaccess`)).
     const size_t nrows = gmat.row_ptr.size() - 1;
     for (size_t row_idx = 0; row_idx < nrows; ++row_idx) {
-      // TODO: `oaccess` for level index could be possibly just one SIMD
-      // instruction.
       const size_t level_index =
           this->row_node_map_.GetRowTarget(row_idx, depth) - base_nid;
       CHECK(level_index < vec_split_fid.size());
-      const xgboost::bst_uint fid = vec_split_fid[level_index];
-      const int split_cond = vec_split_cond[level_index];
-      const bool default_left = vec_default_left[level_index] == 1;
-      const int left_id = left_childs[level_index];
-      const int right_id = right_childs[level_index];
+      // const xgboost::bst_uint fid = vec_split_fid[level_index];
+      // const int split_cond = vec_split_cond[level_index];
+      // const bool default_left = vec_default_left[level_index] == 1;
+      // const int left_id = left_childs[level_index];
+      // const int right_id = right_childs[level_index];
+      const xgboost::bst_uint fid = ObliviousArrayAccess(
+          vec_split_fid.data(), level_index, vec_split_fid.size());
+      const int split_cond = ObliviousArrayAccess(
+          vec_split_cond.data(), level_index, vec_split_cond.size());
+      const bool default_left = ObliviousEqual(
+          ObliviousArrayAccess(vec_default_left.data(), level_index,
+                               vec_default_left.size()),
+          static_cast<uint8_t>(1));
+      const int left_id = ObliviousArrayAccess(left_childs.data(), level_index,
+                                               left_childs.size());
+      const int right_id = ObliviousArrayAccess(
+          right_childs.data(), level_index, right_childs.size());
 
-      // TODO: this O(oaccess) depends on how many features we have.
+      // NOTE: oaccess
       const uint32_t fbin_idx =
           column_matrix.OGetRowFeatureBinIndex(row_idx, fid);
 
       // Normal value case.
       int target_id = ObliviousChoose(
-          static_cast<int64_t>(fbin_idx) <= static_cast<int64_t>(split_cond),
+          ObliviousLessOrEqual(static_cast<int64_t>(fbin_idx),
+                               static_cast<int64_t>(split_cond)),
           left_id, right_id);
       // Missing value case.
-      const int missing_value_target_id = default_left ? left_id : right_id;
+      const int missing_value_target_id = ObliviousChoose(default_left, left_id, right_id);
       ObliviousAssign(
-          fbin_idx == std::numeric_limits<uint32_t>::max(),
+          // fbin_idx == std::numeric_limits<uint32_t>::max(),
+          ObliviousEqual(fbin_idx, std::numeric_limits<uint32_t>::max()),
           missing_value_target_id, target_id, &target_id);
       CHECK(depth + 1 <= this->param_.max_depth);
       this->row_node_map_.SetRowTarget(row_idx, depth + 1, target_id);
@@ -302,6 +328,10 @@ void QuantileHistMaker::Builder::ApplySplitLevelWise(
           node_samples_count.resize(target_id + 1, 0);
         }
         node_samples_count[target_id]++;
+      }
+
+      if (row_idx % 10000 == 0) {
+        LOG(CONSOLE) << "DEBUG: LevelWise split handled rows: " << row_idx;
       }
     }
 
@@ -533,6 +563,7 @@ void QuantileHistMaker::Builder::InitData(const GHistIndexMatrix& gmat,
     leaf_value_cache_.clear();
     // initialize histogram collection
     uint32_t nbins = gmat.cut.row_ptr.back();
+    LOG(CONSOLE) << "DEBUG: nbins=" << nbins;
     hist_.Init(nbins);
 
     // initialize histogram builder
@@ -1038,6 +1069,8 @@ void QuantileHistMaker::Builder::BuildLocalHistogramsLevelWise(
     const std::vector<GradientPair>& gpair_h) {
   builder_monitor_.Start("BuildLocalHistogramsLevelWise");
 
+  LOG(CONSOLE) << "DEBUG: begin " << __func__;
+
   // pre-allocate spaces
   std::vector<int> node_ids;
   int depth = -1;
@@ -1062,16 +1095,25 @@ void QuantileHistMaker::Builder::BuildLocalHistogramsLevelWise(
     const size_t icol_end = row_ptr[row_idx + 1];
     for (size_t j = icol_start; j < icol_end; ++j) {
       const uint32_t idx_bin = index[j];
+      // NOTE: this Array-Access is deterministic already.
       const int target_nid = row_node_map_.GetRowTarget(row_idx, depth);
       CHECK(target_nid >= 0 && target_nid < p_tree->param.num_nodes)
           << "Bad target_nid: " << target_nid;
-      // TODO: need `oaccess` here in range (hist_[level_begin_nid,
+      // NOTE: perform `oaccess` here in range (hist_[level_begin_nid,
       // level_end_nid]). If `oaccess` can only works with one double, `Add` can
       // be separated as two doubles.
-      hist_[target_nid][idx_bin].Add(gpair_h[row_idx]);
+      // Need: hist_[target_nid][idx_bin].Add(gpair_h[row_idx]);
+      auto range = GetLevelNodeRange(target_nid);
+      if (row_idx % 10000 == 0) {
+        LOG(CONSOLE) << "DEBUG: oaccess between: [" << range.first << ", " << range.second << "]" << ", target_nid=" << target_nid << ", idx_bin=" << idx_bin << ", row_idx=" << row_idx;
+      }
+      auto stats = hist_.ORead(range.first, range.second, target_nid, idx_bin);
+      stats.Add(gpair_h[row_idx]);
+      hist_.OWrite(range.first, range.second, target_nid, idx_bin, stats);
     }
   }
   builder_monitor_.Stop("BuildLocalHistogramsLevelWise");
+  LOG(CONSOLE) << "DEBUG: end " << __func__;
 }
 
 XGBOOST_REGISTER_TREE_UPDATER(FastHistMaker, "grow_fast_histmaker")

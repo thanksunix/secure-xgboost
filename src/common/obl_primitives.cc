@@ -59,6 +59,8 @@ inline void ObliviousAssignHelper(bool pred, T t_val, T f_val, T *out) {
 #endif
 }
 
+}  // namespace obl
+
 void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
                           const void *f_val, void *out) {
 #ifdef SIMULATED_OBL_ASSIGN
