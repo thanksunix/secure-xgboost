@@ -73,6 +73,7 @@ std::ostream &operator<<(std::ostream &out,
                          const WQSummaryEntry<DType, RType> &entry) {
   out << "[ v=" << entry.value << ", w=" << entry.wmin
       << ", rmin,rmax=" << entry.rmin << "," << entry.rmax << " ]";
+  return out;
 }
 
 template <typename DType, typename RType>
@@ -95,6 +96,7 @@ template <typename DType, typename RType>
 std::ostream &operator<<(std::ostream &out,
                          const WQSummaryQEntry<DType, RType> &entry) {
   out << "[ v=" << entry.value << ", w=" << entry.weight << " ]";
+  return out;
 }
 
 template <typename DType, typename RType>
@@ -115,6 +117,7 @@ std::ostream &operator<<(std::ostream &out,
                          const PruneItem<DType, RType> &item) {
   out << item.entry << ", rank=" << item.rank
       << ", has_entry=" << item.has_entry;
+  return out;
 }
 
 template <typename DType, typename RType>
@@ -132,6 +135,7 @@ template <typename DType, typename RType>
 std::ostream &operator<<(std::ostream &out,
                          const EntryWithPartyInfo<DType, RType> &item) {
   out << item.entry << ", is_party_a=" << item.is_party_a;
+  return out;
 }
 
 }  // namespace common
