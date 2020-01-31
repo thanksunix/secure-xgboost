@@ -285,11 +285,10 @@ void QuantileHistMaker::Builder::ApplySplitLevelWise(
       const uint32_t fbin_idx =
           column_matrix.OGetRowFeatureBinIndex(row_idx, fid);
 
-      int target_id;
       // Normal value case.
-      ObliviousAssign(
+      int target_id = ObliviousChoose(
           static_cast<int64_t>(fbin_idx) <= static_cast<int64_t>(split_cond),
-          left_id, right_id, &target_id);
+          left_id, right_id);
       // Missing value case.
       const int missing_value_target_id = default_left ? left_id : right_id;
       ObliviousAssign(
