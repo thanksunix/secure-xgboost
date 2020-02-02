@@ -1093,24 +1093,34 @@ void QuantileHistMaker::Builder::BuildLocalHistogramsLevelWise(
   for (size_t row_idx = 0; row_idx < nrows; ++row_idx) {
     const size_t icol_start = row_ptr[row_idx];
     const size_t icol_end = row_ptr[row_idx + 1];
+    std::vector<tree::GradStats> delta_stats(hist_.nbins(), tree::GradStats{0, 0});
     for (size_t j = icol_start; j < icol_end; ++j) {
       const uint32_t idx_bin = index[j];
-      // NOTE: this Array-Access is deterministic already.
-      const int target_nid = row_node_map_.GetRowTarget(row_idx, depth);
-      CHECK(target_nid >= 0 && target_nid < p_tree->param.num_nodes)
-          << "Bad target_nid: " << target_nid;
-      // NOTE: perform `oaccess` here in range (hist_[level_begin_nid,
-      // level_end_nid]). If `oaccess` can only works with one double, `Add` can
-      // be separated as two doubles.
-      // Need: hist_[target_nid][idx_bin].Add(gpair_h[row_idx]);
-      auto range = GetLevelNodeRange(target_nid);
-      if (row_idx % 10000 == 0) {
-        LOG(CONSOLE) << "DEBUG: oaccess between: [" << range.first << ", " << range.second << "]" << ", target_nid=" << target_nid << ", idx_bin=" << idx_bin << ", row_idx=" << row_idx;
-      }
-      auto stats = hist_.ORead(range.first, range.second, target_nid, idx_bin);
-      stats.Add(gpair_h[row_idx]);
-      hist_.OWrite(range.first, range.second, target_nid, idx_bin, stats);
+      CHECK(idx_bin < delta_stats.size())
+          << "idx_bin=" << idx_bin << ", nbins=" << delta_stats.size();
+      auto grad = ObliviousArrayAccess(delta_stats.data(), idx_bin, delta_stats.size());
+      grad.Add(gpair_h[row_idx]);
+      ObliviousArrayAssign(delta_stats.data(), idx_bin, delta_stats.size(), grad);
     }
+    const int target_nid = row_node_map_.GetRowTarget(row_idx, depth);
+    CHECK(target_nid >= 0 && target_nid < p_tree->param.num_nodes)
+      << "Bad target_nid: " << target_nid;
+    std::vector<tree::GradStats> previous_stats(delta_stats.size(), tree::GradStats{0, 0});
+    auto range = GetLevelNodeRange(target_nid);
+    // oaccess in range [level_begin_nid, level_end_nid]
+    ObliviousArrayAccessBytes(
+        previous_stats.data(), hist_[0].data() + range.first * hist_.nbins(),
+        previous_stats.size() * sizeof(decltype(previous_stats)::value_type),
+        target_nid - range.first, range.second - range.first);
+    // Add.
+    for (size_t bin_idx = 0; bin_idx < delta_stats.size(); ++bin_idx) {
+      delta_stats[bin_idx].Add(previous_stats[bin_idx]);
+    }
+    // oaccess in range [level_begin_nid, level_end_nid]
+    ObliviousArrayAssignBytes(
+        hist_[0].data() + range.first * hist_.nbins(), delta_stats.data(),
+        delta_stats.size() * sizeof(decltype(delta_stats)::value_type),
+        target_nid - range.first, range.second - range.first);
   }
   builder_monitor_.Stop("BuildLocalHistogramsLevelWise");
   LOG(CONSOLE) << "DEBUG: end " << __func__;

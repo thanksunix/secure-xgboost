@@ -262,6 +262,8 @@ class HistCollection {
     return nbins_;
   }
 
+  size_t row_ptr_size() const { return row_ptr_.size(); }
+
   // create an empty histogram for i-th node
   void AddHistRow(bst_uint nid) {
     constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
