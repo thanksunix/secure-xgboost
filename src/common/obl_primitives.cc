@@ -1,6 +1,7 @@
 #include "obl_primitives.h"
 
 #define SIMULATED_OBL_ASSIGN
+// #define SIMULATED_OBL_ASSIGN_HELPER
 
 namespace obl {
 
@@ -24,7 +25,7 @@ template <typename T,
                                       std::is_scalar<T>::value,
                                   int>::type = 0>
 inline void ObliviousAssignHelper(bool pred, T t_val, T f_val, T *out) {
-#ifdef SIMULATED_OBL_ASSIGN
+#ifdef SIMULATED_OBL_ASSIGN_HELPER
   *out = pred ? t_val : f_val;
 #else
   T result;
@@ -42,7 +43,7 @@ inline void ObliviousAssignHelper(bool pred, T t_val, T f_val, T *out) {
 template <typename T, typename std::enable_if<std::is_same<T, uint8_t>::value,
                                               int>::type = 0>
 inline void ObliviousAssignHelper(bool pred, T t_val, T f_val, T *out) {
-#ifdef SIMULATED_OBL_ASSIGN
+#ifdef SIMULATED_OBL_ASSIGN_HELPER
   *out = pred ? t_val : f_val;
 #else
   uint16_t result;
@@ -75,7 +76,7 @@ void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
 
   // Obliviously assign 8 bytes at a time
   size_t num_8_iter = bytes / 8;
-  // #pragma omp simd
+#pragma omp simd
   for (int i = 0; i < num_8_iter; i++) {
     ObliviousAssignHelper(pred, *((uint64_t *)t), *((uint64_t *)f),
                           (uint64_t *)res);
