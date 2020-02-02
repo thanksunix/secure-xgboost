@@ -258,6 +258,13 @@ class HistCollection {
     data_.clear();
   }
 
+  void Init(uint32_t nbins, size_t num_nodes) {
+    Init(nbins);
+    for (size_t idx = 0; idx < num_nodes; ++idx) {
+      AddHistRow(idx);
+    }
+  }
+
   uint32_t nbins() const {
     return nbins_;
   }

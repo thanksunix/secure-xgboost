@@ -384,9 +384,9 @@ struct WQSummary {
     }
 
     // Bitonic Sort.
-    std::cout << __func__ << " BEGIN 1" << std::endl;
+    LOG(DEBUG) << __func__ << " BEGIN 1" << std::endl;
     ObliviousSort(items.begin(), items.end());
-    std::cout << __func__ << " PASSED 1" << std::endl;
+    LOG(DEBUG) << __func__ << " PASSED 1" << std::endl;
 
     // Choose entrys.
     RType last_selected_entry_value = std::numeric_limits<RType>::min();
@@ -401,9 +401,9 @@ struct WQSummary {
       select_count += ObliviousChoose(do_select, 1, 0);
     }
     // Bitonic Sort.
-    std::cout << __func__ << " BEGIN 2" << std::endl;
+    LOG(DEBUG) << __func__ << " BEGIN 2" << std::endl;
     ObliviousSort(items.begin(), items.end());
-    std::cout << __func__ << " PASSED 2" << std::endl;
+    LOG(DEBUG) << __func__ << " PASSED 2" << std::endl;
 
     this->data[0] = src.data[0];
     this->size = 1 + select_count;
@@ -620,10 +620,10 @@ struct WQSummary {
                    this->data, [](const EntryWithPartyInfo &party_entry) {
                      return party_entry.entry;
                    });
-    std::cout << __func__ << " BEGIN 3" << std::endl;
+    LOG(DEBUG) << __func__ << " BEGIN 3" << std::endl;
     ObliviousSort(this->data, this->data + this->size);
     // std::sort(this->data, this->data + this->size);
-    std::cout << __func__ << " PASSED 3" << std::endl;
+    LOG(DEBUG) << __func__ << " PASSED 3" << std::endl;
 
     // Need to confirm shrink.
     this->size -= duplicate_count;
