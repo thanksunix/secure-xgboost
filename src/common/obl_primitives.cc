@@ -1,5 +1,7 @@
 #include "obl_primitives.h"
 
+#include <iostream>
+
 // #define SIMULATED_OBL_ASSIGN
 // #define SIMULATED_OBL_ASSIGN_HELPER
 
@@ -136,6 +138,17 @@ struct Generic {
         return ObliviousGreater(a.x, b.x);
     }
 };
+
+namespace obl {
+
+template <>
+struct less<Generic> {
+  bool operator()(const Generic& a, const Generic& b) {
+    return a.x < b.x;
+  }
+};
+
+}
 
 struct Generic_16B {
     double x;
@@ -275,7 +288,7 @@ void test_ObliviousAssign() {
 void test_ObliviousSort() {
     double d_arr[5] = {2.123456789, 3.123456789, 1.123456789, -2.123456789, -1.123456789};
     bool pass = true;
-    ObliviousSort(d_arr, 0, 5, true);
+    ObliviousSort(d_arr, d_arr + 5);
 
     for (int i = 0; i < 5; i++) {
         printf("%f ", d_arr[i]);
@@ -288,7 +301,7 @@ void test_ObliviousSort() {
     printf("\n");
 
     int int_arr[5] = {2, 3, 1, -2, -1};
-    ObliviousSort(int_arr, 0, 5, true);
+    ObliviousSort(int_arr, int_arr + 5);
     pass = true;
     for (int i = 0; i < 5; i++) {
         printf("%d ", int_arr[i]);
@@ -301,7 +314,7 @@ void test_ObliviousSort() {
     printf("\n");
     
     Generic g_arr[5] = {Generic(-1.35, 2, 3.21), Generic(4.123, 5, 6.432), Generic(-5.123, 3, 7.432), Generic(6.123, 1, 1.432), Generic(-3.123, 4, 0.432)};
-    ObliviousSortPOD(g_arr, 0, 5, true);
+    ObliviousSort(g_arr, g_arr + 5);
     pass = true;
     for (int i = 0; i < 5; i++) {
         printf("%f,%d,%f -- ", g_arr[i].x, g_arr[i].y, g_arr[i].z);
@@ -425,4 +438,5 @@ void test_ObliviousArrayAssign() {
 //     test_ObliviousSort();
 //     test_ObliviousArrayAccess();
 //     test_ObliviousArrayAssign(); 
+//     return 0;
 // }
