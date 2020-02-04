@@ -100,6 +100,34 @@ std::ostream &operator<<(std::ostream &out,
 }
 
 template <typename DType, typename RType>
+struct WQSummaryQEntryHelper {
+  using QEntry = WQSummaryQEntry<DType, RType>;
+  // Entry
+  QEntry entry;
+  // New
+  bool is_new;
+  // default constructor
+  WQSummaryQEntryHelper() = default;
+  // constructor
+  WQSummaryQEntryHelper(DType value, RType weight)
+      : entry(value, weight), is_new(false) {}
+  // ctor from entry
+  WQSummaryQEntryHelper(const QEntry &entry) : entry(entry), is_new(false) {}
+  // comparator
+  inline bool operator<(const WQSummaryQEntryHelper &b) const {
+    return entry < b.entry;
+  }
+};
+
+template <typename DType, typename RType>
+std::ostream &operator<<(std::ostream &out,
+                         const WQSummaryQEntryHelper<DType, RType> &entry) {
+  out << "[ entry=" << entry << ", is_new=" << entry.is_new
+      << ", wsum=" << entry.wsum << " ]";
+  return out;
+}
+
+template <typename DType, typename RType>
 struct PruneItem {
   using Entry = WQSummaryEntry<DType, RType>;
   Entry entry;
@@ -231,6 +259,7 @@ struct WQSummary {
   struct Queue {
     // entry in the queue
     using QEntry = WQSummaryQEntry<DType, RType>;
+    using QEntryHelper = WQSummaryQEntryHelper<DType, RType>;
     // the input queue
     std::vector<QEntry> queue;
     // end of the queue
@@ -243,10 +272,18 @@ struct WQSummary {
         queue[qtail - 1].weight += w;
       }
     }
-    inline void MakeSummary(WQSummary *out) {
-      ObliviousSort(queue.begin(), queue.begin() + qtail);
 
-      // TODO: O(nlogn) oblivious
+    inline void MakeSummary(WQSummary *out) {
+      if (ObliviousEnabled()) {
+        return MakeSummaryOblivious(out);
+      } else {
+        return MakeSummaryRaw(out);
+      }
+    }
+
+    inline void MakeSummaryRaw(WQSummary *out) {
+      std::sort(queue.begin(), queue.begin() + qtail);
+
       out->size = 0;
       // start update sketch
       RType wsum = 0;
@@ -261,6 +298,70 @@ struct WQSummary {
         out->data[out->size++] = Entry(wsum, wsum + w, w, queue[i].value);
         wsum += w;
         i = j;
+      }
+    }
+
+    inline void MakeSummaryOblivious(WQSummary *out) {
+      ObliviousSort(queue.begin(), queue.begin() + qtail);
+
+      std::vector<QEntryHelper> qhelper(queue.begin(), queue.begin() + qtail);
+
+      for (auto &helper_entry : qhelper) {
+        // zero weights
+        helper_entry.entry.weight = 0;
+      }
+
+      size_t unique_count = 0;
+      for (size_t idx = 0; idx < qhelper.size(); ++idx) {
+        // sum weight for same value
+        qhelper[idx].entry.weight += queue[idx].weight;
+        // next is not same as me
+        bool is_new = idx == qhelper.size() - 1
+                          ? true
+                          : !ObliviousEqual(qhelper[idx + 1].entry.value,
+                                            qhelper[idx].entry.value);
+        qhelper[idx].is_new = is_new;
+        unique_count += is_new;
+        if (idx != qhelper.size() - 1) {
+          // Accumulate when next is same with me, otherwise reset to zero.
+          qhelper[idx + 1].entry.weight =
+              ObliviousChoose(is_new, 0.f, qhelper[idx].entry.weight);
+        }
+      }
+
+      struct IsNewDescendingSorter {
+        bool operator()(const QEntryHelper &a, const QEntryHelper &b) {
+          return a.is_new > b.is_new;
+        }
+      };
+
+      struct ValueSorter {
+        bool operator()(const QEntryHelper &a, const QEntryHelper &b) {
+          return a.entry.value < b.entry.value;
+        }
+      };
+
+      // Remove duplicates.
+      ObliviousSort(qhelper.begin(), qhelper.end(), IsNewDescendingSorter());
+
+      // Resort by value.
+      ObliviousSort(qhelper.begin(), qhelper.begin() + unique_count,
+                    ValueSorter());
+
+      out->size = 0;
+      RType wsum = 0;
+      for (size_t idx = 0; idx < unique_count; ++idx) {
+        const RType w = qhelper[idx].entry.weight;
+        out->data[out->size++] =
+            Entry(wsum, wsum + w, w, qhelper[idx].entry.value);
+        wsum += w;
+      }
+
+      if (ObliviousDebugCheckEnabled()) {
+        std::vector<Entry> oblivious_results(out->data, out->data + out->size);
+        this->MakeSummaryRaw(out);
+        CheckEqualSummary(*out, WQSummary(oblivious_results.data(),
+                                          oblivious_results.size()));
       }
     }
   };
