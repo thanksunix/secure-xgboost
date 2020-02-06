@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <cstring>
 
 //----------------------------------------------------------------------------
 // Interface
@@ -364,6 +365,7 @@ inline void ObliviousAssignHelper(bool pred, T t_val, T f_val, T *out) {
 
 inline void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
                                  const void *f_val, void *out) {
+// #define SIMULATED_OBL_ASSIGN
 #ifdef SIMULATED_OBL_ASSIGN
   if (pred)
     std::memcpy(out, t_val, nbytes);

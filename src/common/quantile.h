@@ -331,13 +331,13 @@ struct WQSummary {
 
       struct IsNewDescendingSorter {
         bool operator()(const QEntryHelper &a, const QEntryHelper &b) {
-          return a.is_new > b.is_new;
+          return ObliviousGreater(a.is_new, b.is_new);
         }
       };
 
       struct ValueSorter {
         bool operator()(const QEntryHelper &a, const QEntryHelper &b) {
-          return a.entry.value < b.entry.value;
+          return ObliviousLess(a.entry.value, b.entry.value);
         }
       };
 
