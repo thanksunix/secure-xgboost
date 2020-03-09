@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 #include <cstring>
+#include <immintrin.h>
 
 //----------------------------------------------------------------------------
 // Interface
@@ -361,17 +362,6 @@ inline void ObliviousArrayAssignBytes(void *array, const void *src,
   }
 }
 
-inline void ObliviousArrayAccessBytes(void *dst, const void *array,
-                                      size_t nbytes, size_t i, size_t n) {
-  size_t step = nbytes < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / nbytes : 1;
-  for (size_t j = 0; j < n; j += step) {
-    bool cond = ObliviousEqual(j / step, i / step);
-    int pos = ObliviousChoose(cond, i, j);
-    void *src_pos = (char *)(array) + pos * nbytes;
-    obl::ObliviousBytesAssign(cond, nbytes, src_pos, dst, dst);
-  }
-}
-
 namespace detail {
 
 inline uint32_t greatest_power_of_two_less_than(uint32_t n) {
@@ -604,3 +594,4 @@ inline void ObliviousBytesAssign(bool pred, size_t nbytes, const void *t_val,
 #endif
 }
 }  // namespace obl
+
