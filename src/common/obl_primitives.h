@@ -1,15 +1,10 @@
 #pragma once
-#include <algorithm>
+
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <iostream>
 #include <type_traits>
-#include <immintrin.h>
+#include <cstring>
 
-//#define SIMULATED_OBL_ASSIGN
-//#define SIMULATED_OBL_ASSIGN_HELPER
-//#define SIMULATED_OBL_SORT
 //----------------------------------------------------------------------------
 // Interface
 
@@ -366,6 +361,17 @@ inline void ObliviousArrayAssignBytes(void *array, const void *src,
   }
 }
 
+inline void ObliviousArrayAccessBytes(void *dst, const void *array,
+                                      size_t nbytes, size_t i, size_t n) {
+  size_t step = nbytes < CACHE_LINE_SIZE ? CACHE_LINE_SIZE / nbytes : 1;
+  for (size_t j = 0; j < n; j += step) {
+    bool cond = ObliviousEqual(j / step, i / step);
+    int pos = ObliviousChoose(cond, i, j);
+    void *src_pos = (char *)(array) + pos * nbytes;
+    obl::ObliviousBytesAssign(cond, nbytes, src_pos, dst, dst);
+  }
+}
+
 namespace detail {
 
 inline uint32_t greatest_power_of_two_less_than(uint32_t n) {
@@ -461,22 +467,18 @@ template <typename Iter, typename Comparator>
 inline void ObliviousMerge(Iter begin, Iter end, Comparator cmp) {
   using value_type = typename std::remove_reference<decltype(*begin)>::type;
   value_type *array = &(*begin);
-  detail::imperative_o_merge<value_type, Comparator>(array, 0,
-                                                            end - begin, cmp);
+  detail::imperative_o_merge<value_type, Comparator>(array, 0, end - begin, cmp);
 }
 
 template <typename Iter, typename Comparator>
 inline void ObliviousSort(Iter begin, Iter end, Comparator cmp) {
-  #ifdef SIMULATED_OBL_SORT
-    std::sort(begin, end, cmp);
-  #else
   using value_type = typename std::remove_reference<decltype(*begin)>::type;
   value_type *array = &(*begin);
-  detail::o_sort<value_type, Comparator>(array, 0, end - begin, cmp);
-  #endif
+  return detail::o_sort<value_type, Comparator>(array, 0, end - begin, cmp);
 }
 
 namespace obl {
+
 template <typename T,
           typename std::enable_if<!std::is_same<T, uint8_t>::value &&
                                       std::is_scalar<T>::value,
